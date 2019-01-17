@@ -29,19 +29,64 @@
 #include "BuiltinFuncs.hpp"
 
 
+
+/**
+ * NOTE in order to allow color functions/values we could either
+ *   a) make eval return a union type
+ *   b) special case evaluation of rgb/rgba parameters
+ *   c) figure out how to return an RGBA value in a double.
+ *
+ * I went with c. The idea is to 12 bits for each of R, G, B, A to create a 48bit integer,
+ * and then return the computed value integer value as as a double.
+ *
+ * The scheme can be changed as long as packRGB() and unpackRGB() match.
+ */
+
+const int RGB_BITS = 12;
+const unsigned RGB_MASK = ((1<<RGB_BITS)-1);
+const float RGB_SCALE= ((float)RGB_MASK);
+
+expr_t packRGBA(expr_t r, expr_t g, expr_t b, expr_t a)
+{
+	unsigned long rgba = 0;
+	rgba += (unsigned)(RGB_SCALE * fmax(0, fmin(1.0, r)));
+	rgba <<= RGB_BITS;
+	rgba += (unsigned)(RGB_SCALE * fmax(0, fmin(1.0, g)));
+	rgba <<= RGB_BITS;
+	rgba += (unsigned)(RGB_SCALE * fmax(0, fmin(1.0, b)));
+	rgba <<= RGB_BITS;
+	rgba += (unsigned)(RGB_SCALE * fmax(0, fmin(1.0, a)));
+	return (double)rgba;
+}
+
+void unpackRGBA(double RGBA, float &r, float &g, float &b, float &a)
+{
+	// extract 48 bit unsigned int
+	auto rgba = (uint64_t)fmax(0, fmin((double)0xfffffffffffful, RGBA));
+	// extract 4 12-bit integers and scale 0.0-1.0
+	a = (rgba & RGB_MASK) / RGB_SCALE;
+	rgba >>= RGB_BITS;
+	b = (rgba & RGB_MASK) / RGB_SCALE;
+	rgba >>= RGB_BITS;
+	g = (rgba & RGB_MASK) / RGB_SCALE;
+	rgba >>= RGB_BITS;
+	r = (rgba & RGB_MASK) / RGB_SCALE;
+}
+
+
 /* Evaluates functions in prefix form */
-float PrefunExpr::eval ( int mesh_i, int mesh_j )
+expr_t PrefunExpr::eval ( int mesh_i, int mesh_j )
 {
 	assert ( func_ptr );
-	float arg_list_stk[10];
+    expr_t arg_list_stk[10];
 
-	float * arg_list;
-	float * argp;
+    expr_t * arg_list;
+    expr_t * argp;
 	Expr **expr_listp = expr_list;
 
 
 	if (this->num_args > 10) {
-		arg_list = new float[this->num_args];
+		arg_list = new expr_t[this->num_args];
 	} else {
 		arg_list = arg_list_stk;
 	}
@@ -60,7 +105,7 @@ float PrefunExpr::eval ( int mesh_i, int mesh_j )
 	/* Now we call the function, passing a list of
 	   floats as its argument */
 
-	const float value = ( func_ptr ) ( arg_list );
+	const expr_t value = ( func_ptr ) ( arg_list );
 
 	if (arg_list != arg_list_stk) {
 		delete[](arg_list);
@@ -71,65 +116,68 @@ float PrefunExpr::eval ( int mesh_i, int mesh_j )
 
 class PrefunExprOne : public PrefunExpr
 {
-	float eval ( int mesh_i, int mesh_j )
+    expr_t eval ( int mesh_i, int mesh_j ) override
 	{
-		float val = expr_list[0]->eval ( mesh_i, mesh_j );
-		return (func_ptr)(&val);
+        expr_t val = expr_list[0]->eval ( mesh_i, mesh_j );
+		expr_t ret = (func_ptr)(&val);
+		if (ret > 100)
+		    ret = (func_ptr)(&val);
+		return ret;
 	}
 };
 
 class SinExpr : public PrefunExpr
 {
-	float eval ( int mesh_i, int mesh_j ) override
+	expr_t eval ( int mesh_i, int mesh_j ) override
 	{
-		float val = expr_list[0]->eval ( mesh_i, mesh_j );
+		expr_t val = expr_list[0]->eval ( mesh_i, mesh_j );
 		return sinf(val);
 	}
 };
 
 class CosExpr : public PrefunExpr
 {
-	float eval ( int mesh_i, int mesh_j ) override
+	expr_t eval ( int mesh_i, int mesh_j ) override
 	{
-		float val = expr_list[0]->eval ( mesh_i, mesh_j );
+		expr_t val = expr_list[0]->eval ( mesh_i, mesh_j );
 		return cosf(val);
 	}
 };
 
 class LogExpr : public PrefunExpr
 {
-    float eval ( int mesh_i, int mesh_j ) override
+	expr_t eval ( int mesh_i, int mesh_j ) override
     {
-        float val = expr_list[0]->eval ( mesh_i, mesh_j );
+		expr_t val = expr_list[0]->eval ( mesh_i, mesh_j );
         return logf(val);
     }
 };
 
 class PowExpr : public PrefunExpr
 {
-    float eval ( int mesh_i, int mesh_j ) override
+	expr_t eval ( int mesh_i, int mesh_j ) override
     {
-        float x = expr_list[0]->eval ( mesh_i, mesh_j );
-        float y = expr_list[1]->eval ( mesh_i, mesh_j );
+		expr_t x = expr_list[0]->eval ( mesh_i, mesh_j );
+		expr_t y = expr_list[1]->eval ( mesh_i, mesh_j );
         return powf(x, y);
     }
 };
 
 class ConstantExpr : public Expr
 {
-	float constant;
+	expr_t constant;
 public:
-	ConstantExpr( float value ) : Expr(CONSTANT), constant(value) {}
+	ConstantExpr( double value ) : Expr(CONSTANT), constant(value) {}
 	ConstantExpr( int type, Term *term ) : Expr(CONSTANT), constant(term->constant) {}
-	bool isConstant() 
+	bool isConstant() override
 	{
 		return true; 
 	}
-	float eval(int mesh_i, int mesh_j ) 
+    expr_t eval(int mesh_i, int mesh_j ) override
 	{ 
 		return constant; 
 	}
-	std::ostream &to_string(std::ostream &out)
+	std::ostream &to_string(std::ostream &out) override
 	{
 		out << constant; return out;
 	}
@@ -149,11 +197,11 @@ public:
         Expr::delete_expr(b);
         Expr::delete_expr(c);
     }
-	float eval(int mesh_i, int mesh_j) override
+    expr_t eval(int mesh_i, int mesh_j) override
 	{
-		float a_value = a->eval(mesh_i,mesh_j);
-		float b_value = b->eval(mesh_i,mesh_j);
-		float c_value = c->eval(mesh_i,mesh_j);
+        expr_t a_value = a->eval(mesh_i,mesh_j);
+        expr_t b_value = b->eval(mesh_i,mesh_j);
+        expr_t c_value = c->eval(mesh_i,mesh_j);
 		return a_value * b_value + c_value;
 	}
 	std::ostream &to_string(std::ostream &out) override
@@ -166,9 +214,9 @@ public:
 class MultConstExpr : public Expr
 {
     Expr *expr;
-    float c;
+    expr_t c;
 public:
-    MultConstExpr(Expr *_expr, float _c) : Expr(OTHER),
+    MultConstExpr(Expr *_expr, expr_t _c) : Expr(OTHER),
         expr(_expr), c(_c)
     {
     }
@@ -176,9 +224,9 @@ public:
     {
         Expr::delete_expr(expr);
     }
-    float eval(int mesh_i, int mesh_j) override
+	expr_t eval(int mesh_i, int mesh_j) override
     {
-        float value = expr->eval(mesh_i,mesh_j);
+        expr_t value = expr->eval(mesh_i,mesh_j);
         return value * c;
     }
     std::ostream &to_string(std::ostream &out) override
@@ -221,7 +269,7 @@ std::ostream &TreeExpr::to_string(std::ostream &out)
 	return out;
 }
 
-/* NOTE: Parser.cpp directly manipulates TreeExpr, so it is easier to _optimizer AFTER parsing
+/* NOTE: Parser.cpp directly manipulates TreeExpr, so it is easier to optimize AFTER parsing
  * than while building up the tree initially 
  */
 Expr *TreeExpr::_optimize()
@@ -294,9 +342,9 @@ Expr *TreeExpr::_optimize()
 }
 
 /* Evaluates an expression tree */
-float TreeExpr::eval ( int mesh_i, int mesh_j )
+expr_t TreeExpr::eval ( int mesh_i, int mesh_j )
 {
-	float left_arg, right_arg;
+    expr_t left_arg, right_arg;
 
 	/* shouldn't be null if we've called _optimize() */
 	assert(NULL != infix_op);
@@ -336,7 +384,7 @@ float TreeExpr::eval ( int mesh_i, int mesh_j )
 }
 
 /* Converts a float value to a general expression */
-Expr * Expr::const_to_expr ( float val )
+Expr * Expr::const_to_expr ( double val )
 {
 	Term term;
 	term.constant = val;
@@ -366,23 +414,23 @@ Expr * Expr::param_to_expr ( Param * param )
 }
 
 /* Converts a prefix function to an expression */
-Expr * Expr::prefun_to_expr ( float ( *func_ptr ) ( void * ), Expr ** expr_list, int num_args )
+Expr * Expr::prefun_to_expr ( expr_t (*func_ptr)(void *), Expr ** expr_list, int num_args )
 {
     PrefunExpr *prefun_expr;
     if (num_args == 1)
     {
-        if (func_ptr == (float (*)(void *)) FuncWrappers::sin_wrapper)
+        if (func_ptr == (expr_t (*)(void *)) FuncWrappers::sin_wrapper)
             prefun_expr = new SinExpr();
-        else if (func_ptr == (float (*)(void *)) FuncWrappers::cos_wrapper)
+        else if (func_ptr == (expr_t (*)(void *)) FuncWrappers::cos_wrapper)
             prefun_expr = new CosExpr();
-        else if (func_ptr == (float (*)(void *)) FuncWrappers::log_wrapper)
+        else if (func_ptr == (expr_t (*)(void *)) FuncWrappers::log_wrapper)
             prefun_expr = new LogExpr();
         else
             prefun_expr = new PrefunExprOne();
     }
     else if (num_args == 2)
     {
-        if (func_ptr == (float (*)(void *)) FuncWrappers::pow_wrapper)
+        if (func_ptr == (expr_t (*)(void *)) FuncWrappers::pow_wrapper)
             prefun_expr = new PowExpr();
         else
             prefun_expr = new PrefunExpr();
@@ -393,7 +441,7 @@ Expr * Expr::prefun_to_expr ( float ( *func_ptr ) ( void * ), Expr ** expr_list,
     }
 
 	prefun_expr->num_args = num_args;
-	prefun_expr->func_ptr = ( float ( * ) ( void* ) ) func_ptr;
+	prefun_expr->func_ptr = ( expr_t ( * ) ( void* ) ) func_ptr;
 	prefun_expr->expr_list = expr_list;
 	return prefun_expr;
 }
@@ -409,7 +457,7 @@ class TreeExprAdd : public TreeExpr
 public:
 	TreeExprAdd( InfixOp * _infix_op, Expr * _gen_expr, TreeExpr * _left, TreeExpr * _right ) :
 	 	TreeExpr( _infix_op, _gen_expr, _left, _right) {}
-	float eval( int mesh_i, int mesh_j)
+    expr_t eval( int mesh_i, int mesh_j)
 	{
 		return left->eval(mesh_i, mesh_j) + right->eval(mesh_i, mesh_j);
 	}
@@ -420,7 +468,7 @@ class TreeExprMinus : public TreeExpr
 public:
 	TreeExprMinus( InfixOp * _infix_op, Expr * _gen_expr, TreeExpr * _left, TreeExpr * _right ) :
 	 	TreeExpr( _infix_op, _gen_expr, _left, _right) {}
-	float eval( int mesh_i, int mesh_j)
+    expr_t eval( int mesh_i, int mesh_j)
 	{
 		return left->eval(mesh_i, mesh_j) - right->eval(mesh_i, mesh_j);
 	}
@@ -431,9 +479,12 @@ class TreeExprMult : public TreeExpr
 public:
 	TreeExprMult( InfixOp * _infix_op, Expr * _gen_expr, TreeExpr * _left, TreeExpr * _right ) :
 	 	TreeExpr( _infix_op, _gen_expr, _left, _right) {}
-	float eval( int mesh_i, int mesh_j)
+    expr_t eval( int mesh_i, int mesh_j)
 	{
-		return left->eval(mesh_i, mesh_j) * right->eval(mesh_i, mesh_j);
+	    expr_t l=left->eval(mesh_i, mesh_j);
+	    expr_t r=right->eval(mesh_i, mesh_j);
+	    expr_t ret = l*r;
+	    return ret;
 	}
 };
 
@@ -502,10 +553,10 @@ PrefunExpr::PrefunExpr() : Expr(FUNCTION)
 {
 }
 
-bool isConstantFn(float (* fn)(void*))
+bool isConstantFn(expr_t (* fn)(void*))
 {
-    return (float (*)(float *))fn != FuncWrappers::print_wrapper &&
-           (float (*)(float *))fn != FuncWrappers::rand_wrapper;
+    return (expr_t (*)(expr_t *))fn != FuncWrappers::print_wrapper &&
+           (expr_t (*)(expr_t *))fn != FuncWrappers::rand_wrapper;
 }
 
 Expr *PrefunExpr::_optimize()
@@ -558,9 +609,9 @@ Expr * AssignExpr::_optimize()
     return this;
 }
 
-float AssignExpr::eval(int mesh_i, int mesh_j)
+expr_t AssignExpr::eval(int mesh_i, int mesh_j)
 {
-    float v = rhs->eval( mesh_i, mesh_j );
+	expr_t v = rhs->eval( mesh_i, mesh_j );
     lhs->set( v );
     return v;
 }
@@ -573,9 +624,9 @@ std::ostream& AssignExpr::to_string(std::ostream &out)
 
 AssignMatrixExpr::AssignMatrixExpr(LValue *lhs_, Expr *rhs_) : AssignExpr(lhs_, rhs_) {}
 
-float AssignMatrixExpr::eval(int mesh_i, int mesh_j)
+expr_t AssignMatrixExpr::eval(int mesh_i, int mesh_j)
 {
-	float v = rhs->eval( mesh_i, mesh_j );
+	expr_t v = rhs->eval( mesh_i, mesh_j );
 	lhs->set_matrix( mesh_i, mesh_j, v );
 	return v;
 }
@@ -620,19 +671,19 @@ public:
 		Expr::delete_expr(x);
 
         Expr **expr_array = (Expr **)malloc(sizeof(Expr *));
-        expr_array[0] = TreeExpr::create(nullptr, Expr::const_to_expr( (float)M_PI ), nullptr, nullptr);
-        Expr *sin = Expr::prefun_to_expr((float (*)(void *))FuncWrappers::sin_wrapper, expr_array, 1);
+        expr_array[0] = TreeExpr::create(nullptr, Expr::const_to_expr( M_PI ), nullptr, nullptr);
+        Expr *sin = Expr::prefun_to_expr((expr_t (*)(void *))FuncWrappers::sin_wrapper, expr_array, 1);
         x = Expr::optimize(sin);
         TEST(x != sin);
         Expr::delete_expr( sin );
         TEST(x->clazz == CONSTANT);
-        TEST(sinf( (float)M_PI ) == x->eval(-1,-10));
+        TEST(sinf( M_PI ) == x->eval(-1,-10));
         Expr::delete_expr(x);
 
         // make sure rand() is not optimized away
         expr_array = (Expr **)malloc(sizeof(Expr *));
-		expr_array[0] = TreeExpr::create(nullptr, Expr::const_to_expr( (float)M_PI ), nullptr, nullptr);
-		Expr *rand = Expr::prefun_to_expr((float (*)(void *))FuncWrappers::rand_wrapper, expr_array, 1);
+		expr_array[0] = TreeExpr::create(nullptr, Expr::const_to_expr( M_PI ), nullptr, nullptr);
+		Expr *rand = Expr::prefun_to_expr((expr_t (*)(void *))FuncWrappers::rand_wrapper, expr_array, 1);
 		x = Expr::optimize(rand);
 		TEST(x == rand);
 		TEST(x->clazz != CONSTANT);

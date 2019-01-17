@@ -33,9 +33,55 @@
 #include "CValue.hpp"
 #include <iostream>
 #include <vector>
+#include <cfloat>
+#include <cmath>
 
 class Test;
 class Param;
+
+
+#define USE_DOUBLE_EVAL 1
+inline float to_float(double d)
+{
+    return (float)fmin(FLT_MAX, fmax(-FLT_MAX, d));
+}
+inline float to_float(float f)
+{
+    return f;
+}
+#if USE_DOUBLE_EVAL
+    typedef double expr_t;
+    inline expr_t expr_value(double d)
+    {
+        return d;
+    }
+    inline expr_t expr_value(float f)
+    {
+        return (double)f;
+    }
+    double packRGBA(expr_t r, expr_t g, expr_t b, expr_t a=1.0f);
+    void unpackRGBA(double RGBA, float &r, float &g, float &b, float &a);
+#else
+    typedef float expr_t;
+    inline expr_t expr_value(double d)
+    {
+        return to_float(d);
+    }
+    inline expr_t expr_value(float f)
+    {
+        return f;
+    }
+    inline expr_t packRGB(expr_t r, expr_t g, expr_t b, expr_t a=1.0f);
+    {
+        assert false;
+        return 0;       // NOTE SUPPORTED!
+    }
+    inline void unpackRGBA(float &r, float &g, float &b, float &a)
+    {
+        r = g = b = a = 0;
+    }
+#endif
+
 
 #define CONST_STACK_ELEMENT 0
 #define EXPR_STACK_ELEMENT 1
@@ -56,7 +102,7 @@ public:
 class Term
 {
 public:
-  float constant; /* static variable */
+  expr_t constant; /* static variable */
   Param *param; /* pointer to a changing variable */
 
   Term() { this->constant = 0; this->param = 0; }
@@ -72,20 +118,21 @@ class Expr
 {
 public:
   ExprClass clazz;
-  Expr(ExprClass c) : clazz(c) {};
+
+  explicit Expr(ExprClass c) : clazz(c) {};
   virtual ~Expr() {};
 
   virtual bool isConstant() { return false; };
-  virtual float eval(int mesh_i, int mesh_j) = 0;
+  virtual expr_t eval(int mesh_i, int mesh_j) = 0;
   virtual std::ostream& to_string(std::ostream &out)
   {
       std::cout << "nyi"; return out;
   }
 
   static Test *test();
-  static Expr *const_to_expr( float val );
+  static Expr *const_to_expr( double val );
   static Expr *param_to_expr( Param *param );
-  static Expr *prefun_to_expr( float (*func_ptr)(void *), Expr **expr_list, int num_args );
+  static Expr *prefun_to_expr( expr_t (*func_ptr)(void *), Expr **expr_list, int num_args );
 
   static void delete_expr(Expr *expr) { if (nullptr != expr) expr->_delete_from_tree(); }
   static Expr *optimize(Expr *root) { return root->_optimize(); };
@@ -130,7 +177,7 @@ public:
   ~TreeExpr() override;
   
   Expr *_optimize() override;
-  float eval(int mesh_i, int mesh_j) override;
+  expr_t eval(int mesh_i, int mesh_j) override;
   std::ostream& to_string(std::ostream &out) override;
 };
 
@@ -138,15 +185,14 @@ public:
 class PrefunExpr : public Expr
 {
 public:
-  float (*func_ptr)(void*);
+  expr_t (*func_ptr)(void*);
   int num_args;
   Expr **expr_list;
   PrefunExpr();
   ~PrefunExpr() override;
 
-  /* Evaluates functions in prefix form */
   Expr *_optimize() override;
-  float eval(int mesh_i, int mesh_j) override;
+  expr_t eval(int mesh_i, int mesh_j) override;
   std::ostream& to_string(std::ostream &out) override;
 };
 
@@ -154,8 +200,8 @@ class LValue : public Expr
 {
 public:
     explicit LValue(ExprClass c) : Expr(c) {};
-    virtual void set(float value) = 0;
-    virtual void set_matrix(int mesh_i, int mesh_j, float value) = 0;
+    virtual void set(expr_t value) = 0;
+    virtual void set_matrix(int mesh_i, int mesh_j, expr_t value) = 0;
 };
 
 
@@ -168,7 +214,7 @@ public:
     AssignExpr(LValue *lhs, Expr *rhs);
     ~AssignExpr() override;
     Expr *_optimize() override;
-    float eval(int mesh_i, int mesh_j) override;
+    expr_t eval(int mesh_i, int mesh_j) override;
     std::ostream& to_string(std::ostream &out) override;
 };
 
@@ -177,7 +223,7 @@ class AssignMatrixExpr : public AssignExpr
 {
 public:
     AssignMatrixExpr(LValue *lhs, Expr *rhs);
-    float eval(int mesh_i, int mesh_j) override;
+    expr_t eval(int mesh_i, int mesh_j) override;
     std::ostream& to_string(std::ostream &out) override;
 };
 
@@ -198,7 +244,7 @@ public:
         for (auto it=steps.begin() ; it<steps.end() ; it++)
             Expr::delete_expr(*it);
     }
-    float eval(int mesh_i, int mesh_j) override
+    expr_t eval(int mesh_i, int mesh_j) override
     {
         float f=0.0f;
         for (auto it=steps.begin() ; it<steps.end() ; it++)

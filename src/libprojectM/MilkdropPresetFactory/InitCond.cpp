@@ -78,13 +78,13 @@ void InitCond::init_cond_to_string()
 	switch (param->type) {
 		
 		case P_TYPE_BOOL:
-			sprintf(string, "%s=%d\n", param->name.c_str(), init_val.bool_val);
+			sprintf(string, "%s=%d\n", param->name.c_str(), init_val.bool_val());
 			break; 
 		case P_TYPE_INT:
-			sprintf(string, "%s=%d\n", param->name.c_str(), init_val.int_val);
+			sprintf(string, "%s=%d\n", param->name.c_str(), init_val.int_val());
 			break;
 		case P_TYPE_DOUBLE:
-			sprintf(string, "%s=%f\n", param->name.c_str(), init_val.float_val);
+			sprintf(string, "%s=%f\n", param->name.c_str(), init_val.float_val());
 			break;
 		default:
 			return;

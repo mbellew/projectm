@@ -63,17 +63,17 @@ Param::Param(const std::string &_name) : LValue(PARAMETER),
         type(P_TYPE_DOUBLE),
         flags(P_FLAG_USERDEF),
         matrix_flag(0),
-        matrix(0),
+        matrix(nullptr),
         local_value(0.0)
 {
-        engine_val = (float *)&local_value;
+    engine_val = &local_value;
 
-        default_init_val.float_val = DEFAULT_DOUBLE_IV;
-        upper_bound.float_val = DEFAULT_DOUBLE_UB;
-        lower_bound.float_val = DEFAULT_DOUBLE_LB;
+    default_init_val = CValue((float)DEFAULT_DOUBLE_IV);
+    upper_bound= CValue((float)DEFAULT_DOUBLE_UB);
+    lower_bound= CValue((float)DEFAULT_DOUBLE_LB);
 
     /// @note may have fixed a recent bug. testing
-    *((float*)engine_val) = default_init_val.float_val;
+    *((float*)engine_val) = to_float(default_init_val.float_val());
  }
 
 /* Free's a parameter type */
@@ -85,7 +85,7 @@ Param::~Param() {
 /* Returns nonzero if the string is valid parameter name */
 bool Param::is_valid_param_string( const char * string ) {
 
-    if (string == NULL)
+    if (string == nullptr)
         return false;
 
     /* This ensures the first character is non numeric */
@@ -105,7 +105,6 @@ bool Param::is_valid_param_string( const char * string ) {
     /* Could also add checks for other symbols. May do later */
 
     return true;
-
 }
 
 
@@ -118,12 +117,12 @@ Param * Param::new_param_float(const char * name, short int flags, void * engine
     CValue iv, ub, lb;
     assert(engine_val);
 
-    iv.float_val = init_val;
-    ub.float_val = upper_bound;
-    lb.float_val = lower_bound;
+    iv = CValue(init_val);
+    ub = CValue(upper_bound);
+    lb = CValue(lower_bound);
 
-    if ((param = Param::create(name, P_TYPE_DOUBLE, flags, engine_val, matrix,iv, ub, lb)) == NULL)
-        return NULL;
+    if ((param = Param::create(name, P_TYPE_DOUBLE, flags, engine_val, matrix,iv, ub, lb)) == nullptr)
+        return nullptr;
 
 
     /* Finished, return success */
@@ -131,19 +130,19 @@ Param * Param::new_param_float(const char * name, short int flags, void * engine
 }
 
 /* Creates a new parameter of type int */
-Param * Param::new_param_int(const char * name, short int flags, void * engine_val,        
+Param * Param::new_param_int(const char * name, short int flags, void * engine_val,	
                              int upper_bound, int lower_bound, int init_val) {
 
     Param * param;
     CValue iv, ub, lb;
     assert(engine_val);
 
-    iv.int_val = init_val;
-    ub.int_val = upper_bound;
-    lb.int_val = lower_bound;
+    iv = CValue(init_val);
+    ub = CValue(upper_bound);
+    lb = CValue(lower_bound);
 
-    if ((param = Param::create(name, P_TYPE_INT, flags, engine_val, NULL, iv, ub, lb)) == NULL)
-        return NULL;
+    if ((param = Param::create(name, P_TYPE_INT, flags, engine_val, nullptr, iv, ub, lb)) == nullptr)
+        return nullptr;
 
 
     /* Finished, return success */
@@ -158,12 +157,12 @@ Param * Param::new_param_bool(const char * name, short int flags, void * engine_
     CValue iv, ub, lb;
     assert(engine_val);
 
-    iv.bool_val = init_val;
-    ub.bool_val = upper_bound;
-    lb.bool_val = lower_bound;
+    iv = CValue(init_val);
+    ub = CValue(upper_bound);
+    lb = CValue(lower_bound);
 
-    if ((param = Param::create(name, P_TYPE_BOOL, flags, engine_val, NULL, iv, ub, lb)) == NULL)
-        return NULL;
+    if ((param = Param::create(name, P_TYPE_BOOL, flags, engine_val, nullptr, iv, ub, lb)) == nullptr)
+        return nullptr;
 
 
     /* Finished, return success */
@@ -177,17 +176,73 @@ Param * Param::new_param_string(const char * name, short int flags, void * engin
     CValue iv, ub, lb;
     assert(engine_val);
 
-    iv.bool_val = 0;
-    ub.bool_val = 0;
-    lb.bool_val = 0;
+    iv = CValue(false);
+    ub = CValue(false);
+    lb = CValue(false);
 
-    if ((param = Param::create(name, P_TYPE_STRING, flags, engine_val, NULL, iv, ub, lb)) == NULL)
-        return NULL;
+    if ((param = Param::create(name, P_TYPE_STRING, flags, engine_val, nullptr, iv, ub, lb)) == nullptr)
+        return nullptr;
 
 
     /* Finished, return success */
     return param;
 }
+
+
+void ParamRGBA::set(expr_t val)
+{
+    float r, g, b, a;
+    unpackRGBA(val, r, g, b, a);
+    if (nullptr != param_a)
+    {
+        param_a->set_param( CValue(a) );
+    }
+    param_b->set_param( CValue(b) );
+    param_g->set_param( CValue(g) );
+    param_r->set_param( CValue(r) );
+}
+
+void ParamRGBA::set_param(CValue cval)
+{
+    set(cval.float_val());
+}
+
+void ParamRGBA::set_param(expr_t val)
+{
+    set(val);
+}
+
+void ParamRGBA::set_matrix(int mesh_i, int mesh_j, expr_t val)
+{
+    float r, g, b, a;
+    unpackRGBA(val, r, g, b, a);
+    if (nullptr != param_a)
+    {
+        param_a->set_param( CValue(a) );
+    }
+    param_b->set_matrix( mesh_i, mesh_j, b );
+    param_g->set_matrix( mesh_i, mesh_j, g );
+    param_r->set_matrix( mesh_i, mesh_j, r );
+}
+
+
+expr_t ParamRGBA::eval(int mesh_i, int mesh_j)
+{
+    expr_t r, g, b, a=1.0;
+    r = param_r->eval(mesh_i, mesh_j);
+    g = param_g->eval(mesh_i, mesh_j);
+    b = param_b->eval(mesh_i, mesh_j);
+    if (nullptr != param_a)
+        a = param_a->eval(mesh_i, mesh_j);
+    double value = packRGBA(r,g,b,a);
+    return value;
+}
+
+LValue *ParamRGBA::getExpr()
+{
+    return this;
+}
+
 
 
 /*
@@ -218,11 +273,11 @@ struct _Param : public Param
         /* do nothing, as the param isn't owned by the expresion tree */
     }
 
-    void set(float value) override
+    void set(expr_t value) override
     {
         set_param(value);
     }
-    void set_matrix(int mesh_i, int mesh_j, float value) override
+    void set_matrix(int mesh_i, int mesh_j, expr_t value) override
     {
         set_param(value);
     }
@@ -237,7 +292,7 @@ public:
                 CValue lower_bound_) :
             _Param(name_, type_, flags_, eqn_val_, matrix_, default_init_val_, upper_bound_, lower_bound_) {}
 
-    float eval(int mesh_i, int mesh_j) override
+    expr_t eval(int mesh_i, int mesh_j) override
     {
         return *(bool *)engine_val ? 1 : 0;
     }
@@ -251,7 +306,7 @@ public:
                 CValue default_init_val_, CValue upper_bound_,
                 CValue lower_bound_) :
             _Param(name_, type_, flags_, eqn_val_, matrix_, default_init_val_, upper_bound_, lower_bound_) {}
-    float eval(int mesh_i, int mesh_j) override
+    expr_t eval(int mesh_i, int mesh_j) override
     {
         return *(int *)engine_val;
     }
@@ -265,7 +320,8 @@ public:
                CValue default_init_val_, CValue upper_bound_,
                CValue lower_bound_) :
             _Param(name_, type_, flags_, eqn_val_, matrix_, default_init_val_, upper_bound_, lower_bound_) {}
-    float eval(int mesh_i, int mesh_j) override
+
+    expr_t eval(int mesh_i, int mesh_j) override
     {
         return 0;
     }
@@ -280,7 +336,8 @@ public:
                CValue lower_bound_) :
             _Param(name_, type_, flags_, eqn_val_, matrix_, default_init_val_, upper_bound_, lower_bound_) {}
     explicit _FloatParam( const std::string &name_) : _Param(name_) {}
-    float eval(int mesh_i, int mesh_j) override
+
+    expr_t eval(int mesh_i, int mesh_j) override
     {
         return *(float *)engine_val;
     }
@@ -294,7 +351,7 @@ public:
                         void * eqn_val_, void *matrix_,
                         CValue default_init_val_, CValue upper_bound_,
                         CValue lower_bound_) :
-            _FloatParam(name_, type_, flags_, eqn_val_, matrix_, default_init_val_, upper_bound_, lower_bound_) 
+            _FloatParam(name_, type_, flags_, eqn_val_, matrix_, default_init_val_, upper_bound_, lower_bound_)
     {
         matrix_flag = true;
     }
@@ -320,7 +377,7 @@ public:
                  CValue default_init_val_, CValue upper_bound_,
                  CValue lower_bound_) :
             _FloatParam(name_, type_, flags_, eqn_val_, matrix_, default_init_val_, upper_bound_, lower_bound_) {}
-    float eval(int mesh_i, int mesh_j) override
+    expr_t eval(int mesh_i, int mesh_j) override
     {
         assert( type == P_TYPE_DOUBLE );
         // see issue 64: There are presets with per_point equations that read from pre_frame/per_pixel parameters,
@@ -330,15 +387,15 @@ public:
             return ( ( ( float** ) matrix ) [mesh_i][mesh_j] );
         return * ( ( float* ) ( engine_val ) );
     }
-    void set_matrix(int mesh_i, int mesh_j, float value) override
+    void set_matrix(int mesh_i, int mesh_j, expr_t value) override
     {
         if (nullptr == matrix)
         {
-            *(float *)engine_val = value;
+            *(float *)engine_val = to_float(value);
         }
         else
         {
-            ((float **) matrix)[mesh_i][mesh_j] = value;
+            ((float **) matrix)[mesh_i][mesh_j] = to_float(value);
             matrix_flag = true;
         }
     }
@@ -354,7 +411,7 @@ public:
                  CValue default_init_val_, CValue upper_bound_,
                  CValue lower_bound_) :
             _FloatParam(name_, type_, flags_, eqn_val_, matrix_, default_init_val_, upper_bound_, lower_bound_) {}
-    float eval(int mesh_i, int mesh_j) override
+    expr_t eval(int mesh_i, int mesh_j) override
     {
         assert( mesh_j == -1 );
         assert( type == P_TYPE_DOUBLE );
@@ -362,15 +419,15 @@ public:
             return ( ( ( float* ) matrix ) [mesh_i] );
         return * ( ( float* ) ( engine_val ) );
     }
-    void set_matrix(int mesh_i, int mesh_j, float value) override
+    void set_matrix(int mesh_i, int mesh_j, expr_t value) override
     {
         if (nullptr == matrix)
         {
-            *(float *)engine_val = value;
+            *(float *)engine_val = to_float(value);
         }
         else
         {
-            ((float *) matrix)[mesh_i] = value;
+            ((float *) matrix)[mesh_i] = to_float(value);
             matrix_flag = true;
         }
     }

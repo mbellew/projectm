@@ -29,27 +29,7 @@
 #ifndef _PARAM_H
 #define _PARAM_H
 
-/* Debug level, zero for none */
-#define PARAM_DEBUG 0
-
-#define P_CREATE 1
-#define P_NONE 0
-
-#define P_TYPE_BOOL 0
-#define P_TYPE_INT 1
-#define P_TYPE_DOUBLE 2
-#define P_TYPE_STRING 3
-
-#define P_FLAG_NONE 0
-#define P_FLAG_READONLY 1
-#define P_FLAG_USERDEF (1 << 1)
-#define P_FLAG_QVAR (1 << 2)
-#define P_FLAG_TVAR (1 << 3)
-#define P_FLAG_ALWAYS_MATRIX (1 << 4)
-#define P_FLAG_PER_PIXEL (1 << 6)
-#define P_FLAG_PER_POINT (1 << 7)
-
-
+#include "ParamDef.hpp"
 #include "Expr.hpp"
 #include "Common.hpp"
 #include <cmath>
@@ -107,8 +87,8 @@ public:
     virtual ~Param();
 
     static bool is_valid_param_string( const char *string );
-    void set_param( float val );
-    void set_param( CValue val );
+    virtual void set_param( expr_t val );        // same as LValue::set()
+    virtual void set_param( CValue val );
     void set_param( std::string &text) { *((std::string*)engine_val) = text; }
 
     static Param *new_param_float( const char *name, short int flags, void *engine_val,
@@ -132,35 +112,30 @@ public:
 
 /* Sets the parameter engine value to value val.
 	clipping occurs if necessary */
-inline void Param::set_param( float val)
+inline void Param::set_param( expr_t val )
 {
     matrix_flag = false;
     switch (type)
     {
     case P_TYPE_BOOL:
-        if (val < 0)
-            *((bool*)engine_val) = false;
-        else if (val > 0)
-            *((bool*)engine_val) = true;
-        else
-            *((bool*)engine_val) = false;
+            *((bool*)engine_val) = (val > 0);
         break;
     case P_TYPE_INT:
         /* Make sure value is an integer */
         val = floor(val);
-        if (val < lower_bound.int_val)
-            *((int*)engine_val) = lower_bound.int_val;
-        else if (val > upper_bound.int_val)
-            *((int*)engine_val) = upper_bound.int_val;
+        if (val < lower_bound.int_val())
+            *((int*)engine_val) = lower_bound.int_val();
+        else if (val > upper_bound.int_val())
+            *((int*)engine_val) = upper_bound.int_val();
         else
             *((int*)engine_val) = (int)val;
         break;
     case P_TYPE_DOUBLE:
         /* Make sure value is an integer */
-        if (val < lower_bound.float_val)
-            *((float*)engine_val) = lower_bound.float_val;
-        else if (val > upper_bound.float_val)
-            *((float*)engine_val) = upper_bound.float_val;
+        if (val < lower_bound.float_val())
+            *((float*)engine_val) = lower_bound.float_val();
+        else if (val > upper_bound.float_val())
+            *((float*)engine_val) = upper_bound.float_val();
         else
             *((float*)engine_val) = val;
         break;
@@ -170,19 +145,32 @@ inline void Param::set_param( float val)
     }
 }
 
-inline void Param::set_param( CValue val)
+inline void Param::set_param(CValue val)
 {
     matrix_flag = false;
     switch (type)
     {
     case P_TYPE_BOOL:
-        set_param( val.bool_val );
+        assert(val.type == P_TYPE_BOOL || val.type == P_TYPE_INT);
+        *(bool *)engine_val = val.bool_val();
         break;
     case P_TYPE_INT:
-        set_param( val.int_val );
+        assert(val.type == P_TYPE_BOOL || val.type == P_TYPE_INT);
+        if (val.int_val() < lower_bound.int_val())
+            *((int *) engine_val) = lower_bound.int_val();
+        else if (val.int_val() > upper_bound.int_val())
+            *((int *) engine_val) = upper_bound.int_val();
+        else
+            *((int *) engine_val) = val.int_val();
         break;
     case P_TYPE_DOUBLE:
-        set_param( val.float_val );
+        assert(val.type == P_TYPE_DOUBLE);
+        if (val.float_val() < lower_bound.float_val())
+            *((float*)engine_val) = lower_bound.float_val();
+        else if (val.float_val() > upper_bound.float_val())
+            *((float*)engine_val) = upper_bound.float_val();
+        else
+            *((float*)engine_val) = to_float(val.float_val());
         break;
     default:
         //abort();
@@ -190,5 +178,25 @@ inline void Param::set_param( CValue val)
     }
 }
 
-#endif /** !_PARAM_TYPES_H */
 
+class ParamRGBA : public Param
+{
+public:
+    ParamRGBA(std::string name_, Param *r, Param *g, Param *b, Param *a):
+            Param(name_, P_TYPE_DOUBLE, P_FLAG_RGB, nullptr, nullptr, CValue(0), CValue(0x00ffffff), CValue(0)),
+            param_r(r), param_g(g), param_b(b), param_a(a)
+    {
+    }
+
+    void set_param( expr_t val ) override;
+    void set_param( CValue val ) override;
+    void set(expr_t value) override;
+    void set_matrix(int mesh_i, int mesh_j, expr_t value) override;
+    expr_t eval(int mesh_i, int mesh_j) override;
+    LValue *getExpr() override;
+
+private:
+    Param *param_r, *param_g, *param_b, *param_a;
+};
+
+#endif /** !_PARAM_TYPES_H */

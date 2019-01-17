@@ -757,7 +757,7 @@ Expr * Parser::_parse_gen_expr ( std::istream &  fs, TreeExpr * tree_expr, Milkd
       }
 
       /* Convert function to expression */
-      if ((gen_expr = Expr::prefun_to_expr((float (*)(void *))func->func_ptr, expr_list, func->getNumArgs())) == NULL)
+      if ((gen_expr = Expr::prefun_to_expr((expr_t (*)(void *))func->func_ptr, expr_list, func->getNumArgs())) == NULL)
       {
         if (PARSE_DEBUG) printf("parse_prefix_args: failed to convert prefix function to general expression (LINE %d) \n",
                                   line_count);
@@ -1265,7 +1265,6 @@ int Parser::parse_int(std::istream &  fs, int * int_ptr)
     break;
   }
 
-
   if (string[0] == 0)
     return PROJECTM_PARSE_ERROR;
 
@@ -1310,16 +1309,23 @@ int Parser::string_to_float(char * string, float * float_ptr)
   return PROJECTM_PARSE_ERROR;
 }
 
+
+int Parser::parse_float(std::istream &  fs, double * float_ptr)
+{
+  token_t token;
+  return _parse_float(fs, float_ptr, token);
+}
+
+
 /* Parses a floating point number */
-int Parser::parse_float(std::istream &  fs, float * float_ptr)
+int Parser::_parse_float(std::istream &  fs, double * float_ptr, token_t &token)
 {
 
   char string[MAX_TOKEN_SIZE];
-  char ** error_ptr;
-  token_t token;
+  char *end_ptr;
   int sign;
 
-  error_ptr =(char**) wipemalloc(sizeof(char**));
+  (*float_ptr) = 0;
 
   token = parseToken(fs, string);
 
@@ -1339,34 +1345,120 @@ int Parser::parse_float(std::istream &  fs, float * float_ptr)
 
   if (string[0] == 0)
   {
-    free(error_ptr);
-    error_ptr = NULL;
     return PROJECTM_PARSE_ERROR;
   }
 
-  (*float_ptr) = sign*strtod(string, error_ptr);
+  (*float_ptr) = sign*strtod(string, &end_ptr);
 
   /* No conversion was performed */
-  if ((**error_ptr == '\0') || (**error_ptr == '\r'))
+  if ((*end_ptr == '\0') || (*end_ptr == '\r'))
   {
-    free(error_ptr);
-    error_ptr = NULL;
     return PROJECTM_SUCCESS;
   }
 
   if (PARSE_DEBUG) printf("parse_float: float conversion failed for string \"%s\"\n", string);
 
-  (*float_ptr) = 0;
-  free(error_ptr);
-  error_ptr = NULL;
   return PROJECTM_PARSE_ERROR;
 
 }
 
+
+/* Parses a floating point number */
+int Parser::parse_color(std::istream &  fs, double * float_ptr)
+{
+  char string[MAX_TOKEN_SIZE] = "";
+  char *end_ptr;
+  token_t token;
+
+  (*float_ptr) = 0;
+  token = parseToken(fs, string);
+
+  if (token == tLPr)
+  {
+    if (0 != strncmp(string, "rgba", 4) && 0 != strncmp(string, "rgb", 3))
+    {
+      if (PARSE_DEBUG)
+        printf("parse_color: float conversion failed for string \"%s\"\n", string);
+    }
+    double r, g, b, a=1.0;
+    int ret;
+
+    ret = _parse_float(fs, &r, token);
+    if (ret != PROJECTM_SUCCESS)
+      return ret;
+    ret = _parse_float(fs, &g, token);
+    if (ret != PROJECTM_SUCCESS)
+      return ret;
+    ret = _parse_float(fs, &b, token);
+    if (ret != PROJECTM_SUCCESS)
+      return ret;
+    if (0 == strncmp(string,"rgba",4))
+    {
+      ret = _parse_float(fs, &a, token);
+      if (ret != PROJECTM_SUCCESS)
+        return ret;
+    }
+    if (token != tRPr)
+    {
+      if (PARSE_DEBUG) printf("parse_color: float conversion failed for string \"%s\"\n", string);
+      return PROJECTM_PARSE_ERROR;
+    }
+
+    *float_ptr = packRGBA(r,g,b,a);
+    return PROJECTM_SUCCESS;
+  }
+
+  if (string[0] == 0)
+  {
+    return PROJECTM_PARSE_ERROR;
+  }
+
+  if (string[0] == '#')
+  {
+    size_t len = strlen(string);
+    if (len != 7 and len != 9)
+    {
+      if (PARSE_DEBUG) printf("parse_color: expected 6 or 8 hex characters after '#' \"%s\"\n", string);
+      return PROJECTM_PARSE_ERROR;
+    }
+    long number = strtol(string+1, &end_ptr, 16);
+    if ((*end_ptr == '\0') || (*end_ptr == '\r'))
+    {
+      float a = 1.0, r, g, b;
+      if (len == 9)
+      {
+        a = (number & 0x00ffu) / 255.0f;
+        number >>= 8;
+      }
+      b = (number & 0x00ffu) / 255.0f;
+      number >>= 8;
+      g = (number & 0x00ffu) / 255.0f;
+      number >>= 8;
+      r = (number & 0x00ffu) / 255.0f;
+      *float_ptr = packRGBA(r,g,b,a);
+      return PROJECTM_SUCCESS;
+    }
+    if (PARSE_DEBUG) printf("parse_color: float conversion failed for string \"%s\"\n", string);
+    return PROJECTM_PARSE_ERROR;
+  }
+
+  double f = strtod(string, &end_ptr);
+
+  if ((*end_ptr == '\0') || (*end_ptr == '\r'))
+  {
+    *float_ptr = packRGBA( f, f, f, 1.0);
+    return PROJECTM_SUCCESS;
+  }
+
+  if (PARSE_DEBUG) printf("parse_float: float conversion failed for string \"%s\"\n", string);
+
+  return PROJECTM_PARSE_ERROR;
+}
+
+
 /* Parses a per frame equation. That is, interprets a stream of data as a per frame equation */
 PerFrameEqn * Parser::parse_per_frame_eqn(std::istream &  fs, int index, MilkdropPreset * preset)
 {
-
   char string[MAX_TOKEN_SIZE];
   Param * param;
   PerFrameEqn * per_frame_eqn;
@@ -1508,26 +1600,31 @@ InitCond * Parser::parse_init_cond(std::istream &  fs, char * name, MilkdropPres
       if (PARSE_DEBUG) printf("parse_init_cond: error parsing integer!\n");
       return NULL;
     }
-    init_val.bool_val = bool_test;
+    init_val = CValue(bool_test);
   }
 
   else if (param->type == P_TYPE_INT)
   {
-    if ((parse_int(fs, (int*)&init_val.int_val)) == PROJECTM_PARSE_ERROR)
+    int i;
+    if (parse_int(fs, &i) == PROJECTM_PARSE_ERROR)
     {
       if (PARSE_DEBUG) printf("parse_init_cond: error parsing integer!\n");
       return NULL;
     }
+    init_val = CValue(i);
   }
 
   /* float value */
   else if (param->type == P_TYPE_DOUBLE)
   {
-    if ((parse_float(fs, (float*)&init_val.float_val)) == PROJECTM_PARSE_ERROR)
+    double f;
+    int ret = (param->flags & P_FLAG_RGB) ? parse_color(fs, &f) : parse_float(fs, &f);
+    if (ret == PROJECTM_PARSE_ERROR)
     {
       if (PARSE_DEBUG) printf("parse_init_cond: error parsing float!\n");
       return NULL;
     }
+    init_val = CValue(f);
   }
 
   /* Unknown value */
@@ -1612,7 +1709,7 @@ InitCond * Parser::parse_per_frame_init_eqn(std::istream &  fs, MilkdropPreset *
   }
 
   /* Compute initial condition value */
-  val = gen_expr->eval(-1,-1);
+  val = to_float(gen_expr->eval(-1,-1));
 
   /* Free the general expression now that we are done with it */
   Expr::delete_expr(gen_expr);
@@ -1620,18 +1717,18 @@ InitCond * Parser::parse_per_frame_init_eqn(std::istream &  fs, MilkdropPreset *
   /* integer value (boolean is an integer in C) */
   if (param->type == P_TYPE_BOOL)
   {
-    init_val.bool_val = (bool)val;
+    init_val = CValue((bool)val);
   }
 
   else if (param->type == P_TYPE_INT)
   {
-    init_val.int_val = (int)val;
+    init_val = CValue((int)val);
   }
 
   /* float value */
   else if (param->type == P_TYPE_DOUBLE)
   {
-    init_val.float_val = val;
+    init_val = CValue(val);
   }
 
   /* Unknown value */
@@ -1824,26 +1921,31 @@ int Parser::parse_wavecode(char * token, std::istream &  fs, MilkdropPreset * pr
       if (PARSE_DEBUG) printf("parse_wavecode: error parsing integer!\n");
       return PROJECTM_PARSE_ERROR;
     }
-    init_val.bool_val = bool_test;
+    init_val = CValue((bool)(bool_test != 0));
   }
   else if (param->type == P_TYPE_INT)
   {
-    if ((parse_int(fs, (int*)&init_val.int_val)) == PROJECTM_PARSE_ERROR)
+    int i;
+    if (parse_int(fs, &i) == PROJECTM_PARSE_ERROR)
     {
 
       if (PARSE_DEBUG) printf("parse_wavecode: error parsing integer!\n");
       return PROJECTM_PARSE_ERROR;
     }
+    init_val = CValue(i);
   }
 
   /* float value */
   else if (param->type == P_TYPE_DOUBLE)
   {
-    if ((parse_float(fs, (float*)&init_val.float_val)) == PROJECTM_PARSE_ERROR)
+    double f;
+    int ret = (param->flags & P_FLAG_RGB) ? parse_color(fs, &f) : parse_float(fs, &f);
+    if (ret == PROJECTM_PARSE_ERROR)
     {
       if (PARSE_DEBUG) printf("parse_wavecode: error parsing float!\n");
       return PROJECTM_PARSE_ERROR;
     }
+    init_val = CValue(f);
   }
 
   /* Unknown value */
@@ -1946,25 +2048,30 @@ int Parser::parse_shapecode(char * token, std::istream &  fs, MilkdropPreset * p
       if (PARSE_DEBUG) printf("parse_shapecode: error parsing integer!\n");
       return PROJECTM_PARSE_ERROR;
     }
-    init_val.bool_val = bool_test;
+    init_val = CValue(bool_test);
   }
   else if (param->type == P_TYPE_INT)
   {
-    if ((parse_int(fs, (int*)&init_val.int_val)) == PROJECTM_PARSE_ERROR)
+    int i;
+    if ((parse_int(fs, &i)) == PROJECTM_PARSE_ERROR)
     {
       if (PARSE_DEBUG) printf("parse_shapecode: error parsing integer!\n");
       return PROJECTM_PARSE_ERROR;
     }
+    init_val = CValue(i);
   }
 
   /* float value */
   else if (param->type == P_TYPE_DOUBLE)
   {
-    if ((parse_float(fs, (float*)&init_val.float_val)) == PROJECTM_PARSE_ERROR)
+    double f;
+    int ret = (param->flags & P_FLAG_RGB) ? parse_color(fs, &f) : parse_float(fs, &f);
+    if (ret == PROJECTM_PARSE_ERROR)
     {
       if (PARSE_DEBUG) printf("parse_shapecode: error parsing float!\n");
       return PROJECTM_PARSE_ERROR;
     }
+    init_val = CValue(f);
   }
 
   /* Unknown value */
@@ -2606,13 +2713,7 @@ else
 }
 
 
-
-
-
-
-
 // TESTS
-
 
 #include <TestRunner.hpp>
 
@@ -2632,7 +2733,7 @@ struct ParserTest : public Test
     std::istringstream is;
     std::istringstream &ss(const char *s) { return is = std::istringstream(s); }
 
-    bool eq(float a, float b)
+    bool eq(expr_t a, expr_t b)
     {
         return std::abs(a-b) < (std::abs(a)+std::abs(b) + 1)/1000.0f;
     }
@@ -2641,9 +2742,9 @@ public:
 
     bool test_float()
     {
-        float f=-1.0f;
+        expr_t f=-1.0f;
         TEST(PROJECTM_SUCCESS == Parser::parse_float(ss("1.1"),&f));
-        TEST(1.1f == f);
+        TEST(eq(1.1,f));
         TEST(PROJECTM_SUCCESS == Parser::parse_float(ss("+1.2"),&f));
         TEST(PROJECTM_SUCCESS == Parser::parse_float(ss("-1.3"),&f));
         TEST(PROJECTM_PARSE_ERROR == Parser::parse_float(ss(""),&f));
@@ -2665,9 +2766,40 @@ public:
         return true;
     }
 
-    bool eval_expr(float expected, const char *s)
+    bool test_color()
     {
-        float result;
+        double color;
+        float r,g,b,a;
+        TEST(PROJECTM_SUCCESS == Parser::parse_color(ss("#ffffff00"),&color));
+        unpackRGBA(color,r,g,b,a);
+        TEST(r == 1.0f);
+        TEST(g == 1.0f);
+        TEST(b == 1.0f);
+        TEST(a == 0.0f);
+        TEST(PROJECTM_SUCCESS == Parser::parse_color(ss("#000000"),&color));
+        unpackRGBA(color,r,g,b,a);
+        TEST(r == 0.0f);
+        TEST(g == 0.0f);
+        TEST(b == 0.0f);
+        TEST(a == 1.0f);
+        TEST(PROJECTM_SUCCESS == Parser::parse_color(ss("rgb(1.0,0.9,0.8)"),&color));
+        unpackRGBA(color,r,g,b,a);
+        TEST(r == 1.0f);
+        TEST(eq(g,0.9f));
+        TEST(eq(b,0.8f));
+        TEST(a == 1.0f);
+        TEST(PROJECTM_SUCCESS == Parser::parse_color(ss("rgba(1.0,0.9,0.8,0.7)"),&color));
+        unpackRGBA(color,r,g,b,a);
+        TEST(r == 1.0f);
+        TEST(eq(g,0.9f));
+        TEST(eq(b,0.8f));
+        TEST(eq(a,0.7f));
+        return true;
+    }
+
+    bool eval_expr(expr_t expected, const char *s)
+    {
+        expr_t result;
         Expr *expr_parse = Parser::parse_gen_expr(ss(s),nullptr,preset);
         TEST(expr_parse != nullptr);
         // Expr doesn't really expect to run 'non-optimized' expressions any longer
@@ -2707,12 +2839,12 @@ public:
         return true;
     }
 
-
     bool _test()
     {
         bool success = true;
         success &= test_float();
         success &= test_int();
+        success &= test_color();
         success &= test_eqn();
         success &= test_lines();
         success &= test_params();

@@ -1,0 +1,16 @@
+[preset00]
+per_frame_1000=// one per frame equation
+per_frame_1001=// initialize user variable
+
+fDecay=0.98
+zoom=0
+rot=0.0
+warp=0.0
+ob_size=0.2
+ob_rgba=#00000000
+ib_size=0.1
+ib_rgba=rgba(1,0,0,1)
+
+per_frame_init_1=SPEED=10;
+
+per_frame_1=ib_r=0.7+0.4*sin(time*SPEED);
