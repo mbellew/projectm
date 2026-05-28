@@ -112,6 +112,9 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(blur2_max);
     REG_VAR(blur3_max);
     REG_VAR(blur1_edge_darken);
+    REG_VAR(video_alpha_mode);
+    REG_VAR(video_alpha_value);
+    REG_VAR(video_alpha_init);
 }
 
 void PerFrameContext::EvaluateInitCode(PresetState& state)
@@ -233,6 +236,9 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *blur2_max = static_cast<PRJM_EVAL_F>(state.blur2Max);
     *blur3_max = static_cast<PRJM_EVAL_F>(state.blur3Max);
     *blur1_edge_darken = static_cast<PRJM_EVAL_F>(state.blur1EdgeDarken);
+    *video_alpha_mode = static_cast<PRJM_EVAL_F>(state.videoAlphaMode);
+    *video_alpha_value = static_cast<PRJM_EVAL_F>(state.videoAlphaValue);
+    *video_alpha_init = static_cast<PRJM_EVAL_F>(state.videoAlphaInit);
 }
 
 void PerFrameContext::CompilePerFrameCode(const std::string& perFrameCode)

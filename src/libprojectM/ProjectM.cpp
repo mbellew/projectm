@@ -33,6 +33,7 @@
 #include <Renderer/ShaderCache.hpp>
 #include <Renderer/TextureManager.hpp>
 #include <Renderer/TransitionShaderManager.hpp>
+#include <Renderer/VideoTexture.hpp>
 
 #include <UserSprites/SpriteManager.hpp>
 
@@ -93,6 +94,10 @@ void ProjectM::SetTexturePaths(std::vector<std::string> texturePaths)
     {
         m_textureManager->SetTextureLoadCallback(m_textureLoadCallback);
     }
+    if (m_videoTexture)
+    {
+        m_textureManager->RegisterTexture("video", m_videoTexture->GetTexture());
+    }
 }
 
 void ProjectM::ResetTextures()
@@ -101,6 +106,10 @@ void ProjectM::ResetTextures()
     if (m_textureLoadCallback)
     {
         m_textureManager->SetTextureLoadCallback(m_textureLoadCallback);
+    }
+    if (m_videoTexture)
+    {
+        m_textureManager->RegisterTexture("video", m_videoTexture->GetTexture());
     }
 }
 
@@ -573,6 +582,34 @@ void ProjectM::TouchDestroyAll()
     // UNIMPLEMENTED
 }
 
+void ProjectM::VideoConfigure(int width, int height, int depth)
+{
+    if (width <= 0 || height <= 0 || depth <= 0)
+    {
+        return;
+    }
+    m_videoTexture = std::make_unique<Renderer::VideoTexture>(width, height, depth);
+    if (m_textureManager)
+    {
+        m_textureManager->RegisterTexture("video", m_videoTexture->GetTexture());
+    }
+}
+
+void ProjectM::VideoSubmitFrame(const void* data, int srcWidth, int srcHeight, int format)
+{
+    if (!m_videoTexture)
+    {
+        return;
+    }
+    m_videoTexture->SubmitFrame(data, srcWidth, srcHeight,
+                                static_cast<Renderer::VideoTexture::PixelFormat>(format));
+}
+
+auto ProjectM::VideoIsActive() const -> bool
+{
+    return m_videoTexture != nullptr;
+}
+
 auto ProjectM::GetRenderContext() -> Renderer::RenderContext
 {
     Renderer::RenderContext ctx{};
@@ -595,6 +632,13 @@ auto ProjectM::GetRenderContext() -> Renderer::RenderContext
 
     ctx.textureManager = m_textureManager.get();
     ctx.shaderCache = m_shaderCache.get();
+    ctx.videoTexture = m_videoTexture.get();
+    if (m_videoTexture)
+    {
+        ctx.videoZWrite = m_videoTexture->NormalizedWritePosition();
+        ctx.videoZRange = m_videoTexture->NormalizedRange();
+        ctx.videoFrameCount = static_cast<float>(m_videoTexture->FrameCount());
+    }
 
     if (m_transition)
     {

@@ -434,5 +434,15 @@ void TextureManager::SetTextureLoadCallback(TextureLoadCallback callback)
     m_textureLoadCallback = std::move(callback);
 }
 
+void TextureManager::RegisterTexture(const std::string& name, std::shared_ptr<Texture> texture)
+{
+    if (!texture)
+    {
+        return;
+    }
+    // Non-user textures are skipped by PurgeTextures since they are not tracked in m_textureStats.
+    m_textures[name] = std::move(texture);
+}
+
 } // namespace Renderer
 } // namespace libprojectM

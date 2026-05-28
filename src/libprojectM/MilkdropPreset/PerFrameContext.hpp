@@ -142,6 +142,9 @@ public:
     PRJM_EVAL_F* blur2_max{};
     PRJM_EVAL_F* blur3_max{};
     PRJM_EVAL_F* blur1_edge_darken{};
+    PRJM_EVAL_F* video_alpha_mode{};
+    PRJM_EVAL_F* video_alpha_value{};
+    PRJM_EVAL_F* video_alpha_init{};
 
     PRJM_EVAL_F q_values_after_init_code[QVarCount]{};
 };

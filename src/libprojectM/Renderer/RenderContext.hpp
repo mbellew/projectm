@@ -11,6 +11,7 @@ namespace Renderer {
 
 class ShaderCache;
 class TextureManager;
+class VideoTexture;
 
 /**
  * @brief Holds all global data of the current rendering context, which can change from frame to frame.
@@ -38,6 +39,11 @@ public:
 
     TextureManager* textureManager{nullptr}; //!< Holds all loaded textures for shader access.
     ShaderCache* shaderCache{nullptr}; //!< The shader chace of this projectM instance.
+
+    VideoTexture* videoTexture{nullptr}; //!< Optional 3D video-history texture, null if not configured.
+    float videoZWrite{0.0f};             //!< Normalized Z of the most-recent video slice (uniform video_z_write).
+    float videoZRange{0.0f};             //!< Normalized Z range of valid slices (uniform video_z_range).
+    float videoFrameCount{0.0f};         //!< Number of video frames uploaded so far (uniform video_frame_count).
 };
 
 } // namespace Renderer

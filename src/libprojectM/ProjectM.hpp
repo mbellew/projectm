@@ -42,6 +42,7 @@ class Renderer;
 class TextureManager;
 class ShaderCache;
 class TransitionShaderManager;
+class VideoTexture;
 } // namespace Renderer
 
 namespace UserSprites {
@@ -272,6 +273,28 @@ public:
     auto UserSpriteIdentifiers() const -> std::vector<uint32_t>;
 
     /**
+     * @brief Allocates the video-history 3D texture and registers it with the texture manager.
+     * @param width Width in pixels of each slice.
+     * @param height Height in pixels of each slice.
+     * @param depth Number of frames retained in the ring buffer.
+     */
+    void VideoConfigure(int width, int height, int depth);
+
+    /**
+     * @brief Submits a video frame to the history buffer. Safe to call from any thread.
+     * @param data Pointer to tightly-packed pixel data.
+     * @param srcWidth Source frame width in pixels.
+     * @param srcHeight Source frame height in pixels.
+     * @param format Pixel format (0=RGB, 1=RGBA, 2=BGRA).
+     */
+    void VideoSubmitFrame(const void* data, int srcWidth, int srcHeight, int format);
+
+    /**
+     * @brief Returns true if the video-history texture has been configured.
+     */
+    auto VideoIsActive() const -> bool;
+
+    /**
      * @brief Draws the given texture on the active preset's main texture to get a "burn-in" effect.
      * @param openGlTextureId The OpenGL texture to draw onto the active preset(s).
      * @param left Left coordinate in pixels on the destination texture.
@@ -331,6 +354,7 @@ private:
     std::unique_ptr<Renderer::PresetTransition> m_transition;                     //!< Transition effect used for blending.
     std::unique_ptr<TimeKeeper> m_timeKeeper;                                     //!< Keeps the different timers used to render and switch presets.
     std::unique_ptr<UserSprites::SpriteManager> m_spriteManager;                  //!< Manages all types of user sprites.
+    std::unique_ptr<Renderer::VideoTexture> m_videoTexture;                       //!< 3D ring-buffer texture for app-provided video frames.
 };
 
 } // namespace libprojectM

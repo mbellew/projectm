@@ -26,6 +26,7 @@
 #include "PresetFileParser.hpp"
 
 #include <Logging.hpp>
+#include <Renderer/VideoTexture.hpp>
 
 namespace libprojectM {
 namespace MilkdropPreset {
@@ -199,6 +200,24 @@ void MilkdropPreset::PerFrameUpdate()
     // Clamp gamma and echo zoom values
     *m_perFrameContext.gamma = std::max(0.0, std::min(8.0, *m_perFrameContext.gamma));
     *m_perFrameContext.echo_zoom = std::max(0.001, std::min(1000.0, *m_perFrameContext.echo_zoom));
+
+    // Upload any pending video frame using preset-controlled alpha parameters,
+    // then refresh shader-visible ring-buffer state in renderContext.
+    if (m_state.renderContext.videoTexture != nullptr)
+    {
+        int mode = static_cast<int>(*m_perFrameContext.video_alpha_mode);
+        if (mode < 0) mode = 0;
+        if (mode > 2) mode = 2;
+
+        m_state.renderContext.videoTexture->UpdateGPU(
+            static_cast<Renderer::VideoTexture::AlphaMode>(mode),
+            static_cast<float>(*m_perFrameContext.video_alpha_value),
+            static_cast<float>(*m_perFrameContext.video_alpha_init));
+
+        m_state.renderContext.videoZWrite = m_state.renderContext.videoTexture->NormalizedWritePosition();
+        m_state.renderContext.videoZRange = m_state.renderContext.videoTexture->NormalizedRange();
+        m_state.renderContext.videoFrameCount = static_cast<float>(m_state.renderContext.videoTexture->FrameCount());
+    }
 }
 
 void MilkdropPreset::Load(const std::string& pathname)

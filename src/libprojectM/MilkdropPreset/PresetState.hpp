@@ -126,6 +126,10 @@ public:
     BlendableFloat blur3Max{1.0f};
     BlendableFloat blur1EdgeDarken{0.25f};
 
+    BlendableFloat videoAlphaMode{0.0f};  //!< 0=source, 1=motion, 2=constant. See VideoTexture::AlphaMode.
+    BlendableFloat videoAlphaValue{1.0f}; //!< Scale factor (motion) or constant alpha (constant).
+    BlendableFloat videoAlphaInit{1.0f};  //!< Alpha for the very first frame (no history yet).
+
     int presetVersion{100};        //!< Value of MILKDROP_PRESET_VERSION in preset files.
     int warpShaderVersion{2};      //!< PSVERSION or PSVERSION_WARP.
     int compositeShaderVersion{2}; //!< PSVERSION or PSVERSION_COMP.

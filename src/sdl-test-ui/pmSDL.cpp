@@ -32,6 +32,10 @@
 
 #include <vector>
 
+#ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
+#include <projectM-4/video.h>
+#endif
+
 namespace {
 auto dispatchLoadProc(const char* name, void* userData) -> void*
 {
@@ -55,11 +59,67 @@ projectMSDL::projectMSDL(SDL_GLContext glCtx, const std::string& presetPath)
 
 projectMSDL::~projectMSDL()
 {
+#ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
+    stopVideoCapture();
+#endif
     projectm_playlist_destroy(_playlist);
     _playlist = nullptr;
     projectm_destroy(_projectM);
     _projectM = nullptr;
 }
+
+#ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
+void projectMSDL::startVideoCapture()
+{
+    if (_videoCapture && _videoCapture->IsRunning())
+    {
+        return;
+    }
+    if (!_videoCapture)
+    {
+        _videoCapture = std::make_unique<VideoCapture>();
+    }
+
+    auto* handle = _projectM;
+    const bool ok = _videoCapture->Start(
+        [handle](const void* data, int width, int height, VideoCapture::PixelFormat fmt) {
+            projectm_video_format pmFmt = PROJECTM_VIDEO_FORMAT_BGRA;
+            (void) fmt; // only BGRA emitted by the macOS backend today
+            projectm_video_submit_frame(handle, data, static_cast<unsigned int>(width),
+                                        static_cast<unsigned int>(height), pmFmt);
+        });
+
+    if (!ok)
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Video capture failed to start (permission denied or no device).");
+    }
+    else
+    {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Video capture started.");
+    }
+}
+
+void projectMSDL::stopVideoCapture()
+{
+    if (_videoCapture)
+    {
+        _videoCapture->Stop();
+    }
+}
+
+void projectMSDL::toggleVideoCapture()
+{
+    if (_videoCapture && _videoCapture->IsRunning())
+    {
+        stopVideoCapture();
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Video capture stopped.");
+    }
+    else
+    {
+        startVideoCapture();
+    }
+}
+#endif
 
 /* Stretch projectM across multiple monitors */
 void projectMSDL::stretchMonitors()
@@ -277,6 +337,12 @@ void projectMSDL::keyHandler(SDL_Event* sdl_evt)
             UpdateWindowTitle();
             break;
 
+#ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
+        case SDLK_v:
+            toggleVideoCapture();
+            break;
+#endif
+
     }
 }
 
@@ -462,6 +528,10 @@ void projectMSDL::init(SDL_Window* window, const bool _renderToTexture)
 
 #ifdef WASAPI_LOOPBACK
     wasapi = true;
+#endif
+
+#ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
+    startVideoCapture();
 #endif
 }
 

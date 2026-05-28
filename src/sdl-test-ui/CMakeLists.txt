@@ -2,6 +2,19 @@ if(NOT ENABLE_SDL_UI OR ENABLE_EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL Android)
     return()
 endif()
 
+# Camera capture for the video-history texture. Enabled on macOS by default; other
+# platforms get a no-op stub via the CMake conditional below.
+set(_video_capture_default OFF)
+if(APPLE)
+    set(_video_capture_default ON)
+endif()
+option(ENABLE_VIDEO_CAPTURE "Enable camera capture in the SDL test UI." ${_video_capture_default})
+
+set(_video_capture_sources videoCapture.hpp)
+if(ENABLE_VIDEO_CAPTURE AND APPLE)
+    list(APPEND _video_capture_sources videoCapture_macos.mm)
+endif()
+
 add_executable(projectM-Test-UI
         ConfigFile.cpp
         ConfigFile.h
@@ -14,7 +27,22 @@ add_executable(projectM-Test-UI
         projectM_SDL_main.cpp
         setup.cpp
         setup.hpp
+        ${_video_capture_sources}
         )
+
+if(ENABLE_VIDEO_CAPTURE AND APPLE)
+    target_compile_definitions(projectM-Test-UI PRIVATE PROJECTM_VIDEO_CAPTURE_ENABLED=1)
+    set_source_files_properties(videoCapture_macos.mm PROPERTIES
+            COMPILE_FLAGS "-fobjc-arc"
+            )
+    target_link_libraries(projectM-Test-UI
+            PRIVATE
+            "-framework AVFoundation"
+            "-framework CoreMedia"
+            "-framework CoreVideo"
+            "-framework Foundation"
+            )
+endif()
 
 target_link_libraries(projectM-Test-UI
         PRIVATE

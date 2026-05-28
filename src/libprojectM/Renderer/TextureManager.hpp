@@ -60,6 +60,15 @@ public:
     void PurgeTextures();
 
     /**
+     * @brief Injects a non-user texture under a given name so presets can sample it.
+     * The texture is not tracked by the usage/eviction system and therefore survives
+     * PurgeTextures(). Used for library-managed textures like the video history texture.
+     * @param name The texture name without any sampler-prefix (e.g. "video").
+     * @param texture The texture to register. Must be non-null.
+     */
+    void RegisterTexture(const std::string& name, std::shared_ptr<Texture> texture);
+
+    /**
      * @brief Sets a callback function for loading textures from non-filesystem sources.
      * @param callback The callback function, or nullptr to disable.
      */

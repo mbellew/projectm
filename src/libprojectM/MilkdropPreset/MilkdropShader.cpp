@@ -236,6 +236,10 @@ void MilkdropShader::LoadVariables(const PresetState& presetState, const PerFram
                                        blurMin[2],
                                        blurMax[2]});
 
+    m_shader.SetUniformFloat("video_z_write", presetState.renderContext.videoZWrite);
+    m_shader.SetUniformFloat("video_z_range", presetState.renderContext.videoZRange);
+    m_shader.SetUniformFloat("video_frame_count", presetState.renderContext.videoFrameCount);
+
 
     std::array<glm::mat4, 24> tempMatrices{};
 
@@ -598,6 +602,14 @@ void MilkdropShader::GetReferencedSamplers(const std::string& program)
     else
     {
         m_maxBlurLevelRequired = BlurTexture::BlurLevel::None;
+    }
+
+    // GetVideo(uv, age) is a macro that expands to tex3D(sampler_fw_video, ...) during
+    // HLSL preprocessing, after this scan runs. Without this, the video texture would
+    // never be bound for shaders that only reference it via the macro.
+    if (stripped.find("GetVideo") != std::string::npos)
+    {
+        m_samplerNames.insert("fw_video");
     }
 }
 

@@ -11,6 +11,7 @@
 
 #include <projectM-4/parameters.h>
 #include <projectM-4/render_opengl.h>
+#include <projectM-4/video.h>
 
 #include <cstring>
 #include <sstream>
@@ -482,6 +483,34 @@ auto projectm_pcm_add_uint8(projectm_handle instance, const uint8_t* samples, un
 auto projectm_write_debug_image_on_next_frame(projectm_handle, const char*) -> void
 {
     // UNIMPLEMENTED
+}
+
+void projectm_video_configure(projectm_handle instance,
+                              unsigned int tex_width, unsigned int tex_height,
+                              unsigned int history_depth)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->VideoConfigure(static_cast<int>(tex_width),
+                                     static_cast<int>(tex_height),
+                                     static_cast<int>(history_depth));
+}
+
+void projectm_video_submit_frame(projectm_handle instance,
+                                 const void* data,
+                                 unsigned int width, unsigned int height,
+                                 projectm_video_format format)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->VideoSubmitFrame(data,
+                                       static_cast<int>(width),
+                                       static_cast<int>(height),
+                                       static_cast<int>(format));
+}
+
+bool projectm_video_is_active(projectm_handle instance)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    return projectMInstance->VideoIsActive();
 }
 
 uint32_t projectm_sprite_create(projectm_handle instance, const char* type, const char* code)

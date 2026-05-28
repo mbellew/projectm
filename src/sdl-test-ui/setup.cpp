@@ -1,6 +1,7 @@
 #include "setup.hpp"
 
 #include <projectM-4/logging.h>
+#include <projectM-4/video.h>
 #include "ConfigFile.h"
 
 #include <SDL2/SDL_hints.h>
@@ -230,7 +231,18 @@ projectMSDL *setupSDLApp() {
 
     // load configuration file
     std::string configFilePath = getConfigFilePath(base_path);
-    std::string presetURL = base_path + "/presets";
+
+    // Allow overriding the preset directory via $PROJECTM_PRESET_PATH for development.
+    std::string presetURL;
+    if (const char* presetEnv = getenv("PROJECTM_PRESET_PATH"))
+    {
+        presetURL = presetEnv;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using preset path from $PROJECTM_PRESET_PATH: %s\n", presetURL.c_str());
+    }
+    else
+    {
+        presetURL = base_path + "/presets";
+    }
 
     app = new projectMSDL(glCtx, presetURL);
 
@@ -275,6 +287,10 @@ projectMSDL *setupSDLApp() {
 #if __APPLE__
     modKey = "CMD";
 #endif
+
+    // Allocate the video-history 3D texture BEFORE init() starts camera capture,
+    // otherwise frames between camera-start and configure are silently dropped.
+    projectm_video_configure(app->projectM(), 256, 144, 120);
 
     app->init(win);
 

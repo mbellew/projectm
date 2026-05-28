@@ -59,6 +59,8 @@ add_library(Renderer OBJECT
         TextureSamplerDescriptor.cpp
         TextureSamplerDescriptor.hpp
         TextureUV.hpp
+        VideoTexture.cpp
+        VideoTexture.hpp
         TransitionShaderManager.cpp
         TransitionShaderManager.hpp
         VertexArray.hpp

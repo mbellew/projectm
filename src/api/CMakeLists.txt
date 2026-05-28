@@ -34,6 +34,7 @@ set(PROJECTM_PUBLIC_HEADERS
         "${CMAKE_CURRENT_SOURCE_DIR}/include/projectM-4/touch.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/projectM-4/types.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/projectM-4/user_sprites.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/projectM-4/video.h"
         )
 
 if(ENABLE_CXX_INTERFACE)

@@ -35,6 +35,12 @@ uniform float4   _qf;           // q vars
 uniform float4   _qg;           // q vars
 uniform float4   _qh;           // q vars bank 8 [q29-q32]
 
+// Video history texture state. Set by the library when a video texture has been
+// configured via projectm_video_configure(). All zero when no video texture exists.
+uniform float    video_z_write;       // normalized Z (slice center) of the most recent frame
+uniform float    video_z_range;       // normalized Z range covered by valid (filled) slices
+uniform float    video_frame_count;   // total frames uploaded so far (0 on first frame)
+
 // note: in general, don't use the current time w/the *dynamic* rotations!
 
 // four random, static rotations, randomized at preset load time.
@@ -153,3 +159,8 @@ uniform float4x3 rot_rand4;
 #define lum(x) (dot(x,float3(0.32,0.49,0.29)))
 #define tex2d tex2D
 #define tex3d tex3D
+
+// Sample the video history texture.
+// age: 0.0 = most recent frame, 1.0 = oldest available frame.
+// Returns float4 (rgba) — alpha is preset-controlled via video_alpha_mode/value/init.
+#define GetVideo(uv, age) tex3D(sampler_fw_video, float3(uv, frac(video_z_write - (age) * video_z_range + 1.0)))

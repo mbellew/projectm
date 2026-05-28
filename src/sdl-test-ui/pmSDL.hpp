@@ -47,6 +47,10 @@
 #include "audioCapture.hpp"
 #include "loopback.hpp"
 #include "setup.hpp"
+#ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
+#include "videoCapture.hpp"
+#include <memory>
+#endif
 
 
 #if defined _MSC_VER
@@ -117,6 +121,11 @@ public:
     int initAudioInput();
     void beginAudioCapture();
     void endAudioCapture();
+#ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
+    void toggleVideoCapture();
+    void startVideoCapture();
+    void stopVideoCapture();
+#endif
     void stretchMonitors();
     void nextMonitor();
     void toggleFullScreen();
@@ -171,4 +180,8 @@ private:
     int _selectedAudioDevice{0};
 
     std::string _presetName; //!< Current preset name
+
+#ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
+    std::unique_ptr<VideoCapture> _videoCapture;
+#endif
 };
