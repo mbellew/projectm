@@ -33,9 +33,10 @@ public:
 
     enum class AlphaMode
     {
-        Source = 0,   //!< Use source alpha as-is (1.0 for RGB sources)
-        Motion = 1,   //!< Alpha = magnitude of RGB difference vs. previous frame, scaled by value
-        Constant = 2, //!< Alpha = value
+        Source = 0,      //!< Use source alpha as-is (1.0 for RGB sources)
+        Motion = 1,      //!< Alpha = magnitude of RGB difference vs. previous frame, scaled by value
+        Constant = 2,    //!< Alpha = value
+        MotionDecay = 3, //!< Alpha = max(motion, previous_alpha * decay) — motion lingers and fades
     };
 
     VideoTexture(int texWidth, int texHeight, int depth);
@@ -58,7 +59,7 @@ public:
      * @brief Uploads the most recently staged frame, if any, to the next ring-buffer slice.
      * Must be called on the GL thread.
      */
-    void UpdateGPU(AlphaMode alphaMode, float alphaValue, float alphaInit);
+    void UpdateGPU(AlphaMode alphaMode, float alphaValue, float alphaInit, float alphaDecay);
 
     int Width() const { return m_texWidth; }
     int Height() const { return m_texHeight; }
@@ -76,7 +77,7 @@ public:
 private:
     void CreateTexture();
     void ConvertAndDownscale(const uint8_t* src, int srcW, int srcH, PixelFormat fmt, uint8_t* dst);
-    void ComputeAlpha(uint8_t* rgba, AlphaMode mode, float value, float initValue);
+    void ComputeAlpha(uint8_t* rgba, AlphaMode mode, float value, float initValue, float decay);
 
     const int m_texWidth;
     const int m_texHeight;
@@ -91,6 +92,7 @@ private:
 
     std::vector<uint8_t> m_workBuffer;
     std::vector<uint8_t> m_previousRGB;
+    std::vector<uint8_t> m_previousAlpha; //!< Last frame's alpha, used by MotionDecay.
     bool m_hasPreviousFrame{false};
     int m_writeIndex{-1};
     uint32_t m_frameCount{0};

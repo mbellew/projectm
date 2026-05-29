@@ -18,6 +18,7 @@ VideoTexture::VideoTexture(int texWidth, int texHeight, int depth)
     m_stagingBuffer.resize(m_sliceBytes);
     m_workBuffer.resize(m_sliceBytes);
     m_previousRGB.resize(static_cast<size_t>(texWidth) * static_cast<size_t>(texHeight) * 3);
+    m_previousAlpha.resize(static_cast<size_t>(texWidth) * static_cast<size_t>(texHeight), 0);
     CreateTexture();
 }
 
@@ -50,7 +51,7 @@ void VideoTexture::SubmitFrame(const void* data, int srcWidth, int srcHeight, Pi
     m_hasPendingFrame = true;
 }
 
-void VideoTexture::UpdateGPU(AlphaMode alphaMode, float alphaValue, float alphaInit)
+void VideoTexture::UpdateGPU(AlphaMode alphaMode, float alphaValue, float alphaInit, float alphaDecay)
 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -62,7 +63,7 @@ void VideoTexture::UpdateGPU(AlphaMode alphaMode, float alphaValue, float alphaI
         m_hasPendingFrame = false;
     }
 
-    ComputeAlpha(m_workBuffer.data(), alphaMode, alphaValue, alphaInit);
+    ComputeAlpha(m_workBuffer.data(), alphaMode, alphaValue, alphaInit, alphaDecay);
 
     m_writeIndex = (m_writeIndex + 1) % m_depth;
 
@@ -75,15 +76,17 @@ void VideoTexture::UpdateGPU(AlphaMode alphaMode, float alphaValue, float alphaI
                     m_workBuffer.data());
     glBindTexture(GL_TEXTURE_3D, 0);
 
-    // Cache RGB for next motion-detection compare.
+    // Cache RGB for next motion-detection compare, and alpha for MotionDecay.
     const uint8_t* src = m_workBuffer.data();
-    uint8_t* prev = m_previousRGB.data();
+    uint8_t* prevRGB = m_previousRGB.data();
+    uint8_t* prevAlpha = m_previousAlpha.data();
     const int pixels = m_texWidth * m_texHeight;
     for (int i = 0; i < pixels; ++i)
     {
-        prev[i * 3 + 0] = src[i * 4 + 0];
-        prev[i * 3 + 1] = src[i * 4 + 1];
-        prev[i * 3 + 2] = src[i * 4 + 2];
+        prevRGB[i * 3 + 0] = src[i * 4 + 0];
+        prevRGB[i * 3 + 1] = src[i * 4 + 1];
+        prevRGB[i * 3 + 2] = src[i * 4 + 2];
+        prevAlpha[i] = src[i * 4 + 3];
     }
     m_hasPreviousFrame = true;
     ++m_frameCount;
@@ -146,7 +149,7 @@ void VideoTexture::ConvertAndDownscale(const uint8_t* src, int srcW, int srcH,
     }
 }
 
-void VideoTexture::ComputeAlpha(uint8_t* rgba, AlphaMode mode, float value, float initValue)
+void VideoTexture::ComputeAlpha(uint8_t* rgba, AlphaMode mode, float value, float initValue, float decay)
 {
     const int pixels = m_texWidth * m_texHeight;
 
@@ -180,6 +183,29 @@ void VideoTexture::ComputeAlpha(uint8_t* rgba, AlphaMode mode, float value, floa
                 int db = std::abs(static_cast<int>(rgba[i * 4 + 2]) - static_cast<int>(prev[i * 3 + 2]));
                 int diff = std::max({dr, dg, db});
                 float a = (static_cast<float>(diff) / 255.0f) * value;
+                if (a < 0.0f) a = 0.0f;
+                if (a > 1.0f) a = 1.0f;
+                rgba[i * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+            }
+            break;
+        }
+
+        case AlphaMode::MotionDecay:
+        {
+            float clampedDecay = decay;
+            if (clampedDecay < 0.0f) clampedDecay = 0.0f;
+            if (clampedDecay > 1.0f) clampedDecay = 1.0f;
+            const uint8_t* prevRGB = m_previousRGB.data();
+            const uint8_t* prevAlpha = m_previousAlpha.data();
+            for (int i = 0; i < pixels; ++i)
+            {
+                int dr = std::abs(static_cast<int>(rgba[i * 4 + 0]) - static_cast<int>(prevRGB[i * 3 + 0]));
+                int dg = std::abs(static_cast<int>(rgba[i * 4 + 1]) - static_cast<int>(prevRGB[i * 3 + 1]));
+                int db = std::abs(static_cast<int>(rgba[i * 4 + 2]) - static_cast<int>(prevRGB[i * 3 + 2]));
+                int diff = std::max({dr, dg, db});
+                float motion = (static_cast<float>(diff) / 255.0f) * value;
+                float decayed = (static_cast<float>(prevAlpha[i]) / 255.0f) * clampedDecay;
+                float a = std::max(motion, decayed);
                 if (a < 0.0f) a = 0.0f;
                 if (a > 1.0f) a = 1.0f;
                 rgba[i * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
