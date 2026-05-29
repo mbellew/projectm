@@ -30,6 +30,8 @@
 
 #include "pmSDL.hpp"
 
+#include <cstdlib>
+#include <string>
 #include <vector>
 
 #ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
@@ -52,6 +54,22 @@ projectMSDL::projectMSDL(SDL_GLContext glCtx, const std::string& presetPath)
     projectm_get_window_size(_projectM, &_width, &_height);
     projectm_playlist_set_preset_switched_event_callback(_playlist, &projectMSDL::presetSwitchedEvent, static_cast<void*>(this));
     projectm_playlist_add_path(_playlist, presetPath.c_str(), true, false);
+    projectm_playlist_set_shuffle(_playlist, _shuffle);
+    dumpOpenGLInfo();
+    enableGLDebugOutput();
+}
+
+projectMSDL::projectMSDL(SDL_GLContext glCtx, const std::vector<std::string>& presetList)
+    : _openGlContext(glCtx)
+    , _projectM(projectm_create_with_opengl_load_proc(&dispatchLoadProc, nullptr))
+    , _playlist(projectm_playlist_create(_projectM))
+{
+    projectm_get_window_size(_projectM, &_width, &_height);
+    projectm_playlist_set_preset_switched_event_callback(_playlist, &projectMSDL::presetSwitchedEvent, static_cast<void*>(this));
+    for (const auto& preset : presetList)
+    {
+        projectm_playlist_add_preset(_playlist, preset.c_str(), true);
+    }
     projectm_playlist_set_shuffle(_playlist, _shuffle);
     dumpOpenGLInfo();
     enableGLDebugOutput();
@@ -81,13 +99,21 @@ void projectMSDL::startVideoCapture()
     }
 
     auto* handle = _projectM;
+    // $PROJECTM_VIDEO_DEVICE picks a non-default capture device by name substring,
+    // e.g. "OBS" to use the OBS Virtual Camera. Empty/unset = system default.
+    std::string deviceName;
+    if (const char* envDev = std::getenv("PROJECTM_VIDEO_DEVICE"))
+    {
+        deviceName = envDev;
+    }
     const bool ok = _videoCapture->Start(
         [handle](const void* data, int width, int height, VideoCapture::PixelFormat fmt) {
             projectm_video_format pmFmt = PROJECTM_VIDEO_FORMAT_BGRA;
             (void) fmt; // only BGRA emitted by the macOS backend today
             projectm_video_submit_frame(handle, data, static_cast<unsigned int>(width),
                                         static_cast<unsigned int>(height), pmFmt);
-        });
+        },
+        deviceName);
 
     if (!ok)
     {
@@ -302,6 +328,7 @@ void projectMSDL::keyHandler(SDL_Event* sdl_evt)
                 this->stretch = false; // if we are toggling fullscreen, ensure we disable monitor stretching.
                 return;                // handled
             }
+            addCurrentPresetToFavorites();
             break;
 
         case SDLK_r:
@@ -546,6 +573,37 @@ std::string projectMSDL::getActivePresetName()
         return presetNameString;
     }
     return {};
+}
+
+void projectMSDL::addCurrentPresetToFavorites()
+{
+    const std::string preset = getActivePresetName();
+    if (preset.empty())
+    {
+        return;
+    }
+
+    const char* path = "favorites.txt";
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line == preset)
+        {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Already in favorites: %s\n", preset.c_str());
+            return;
+        }
+    }
+    in.close();
+
+    std::ofstream out(path, std::ios::app);
+    if (!out)
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Failed to open %s for append\n", path);
+        return;
+    }
+    out << preset << '\n';
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Added to favorites: %s\n", preset.c_str());
 }
 
 void projectMSDL::presetSwitchedEvent(bool isHardCut, unsigned int index, void* context)

@@ -14,6 +14,8 @@
 namespace libprojectM {
 namespace Renderer {
 
+class Shader;
+
 /**
  * @brief Maintains a GL_TEXTURE_3D where X/Y are spatial pixels and Z is recent time.
  *
@@ -33,14 +35,29 @@ public:
 
     enum class AlphaMode
     {
-        Source = 0,      //!< Use source alpha as-is (1.0 for RGB sources)
-        Motion = 1,      //!< Alpha = magnitude of RGB difference vs. previous frame, scaled by value
-        Constant = 2,    //!< Alpha = value
-        MotionDecay = 3, //!< Alpha = max(motion, previous_alpha * decay) — motion lingers and fades
+        Source = 0,             //!< Use source alpha as-is (1.0 for RGB sources, app-supplied mask for RGBA)
+        Motion = 1,             //!< Alpha = magnitude of RGB difference vs. previous frame, scaled by value
+        Constant = 2,           //!< Alpha = value
+        MotionDecay = 3,        //!< Alpha = max(motion, previous_alpha * decay) — motion lingers and fades
+        ChromaKey = 4,          //!< Alpha = foreground-ness; background = pixels near keyColor. value=tolerance (0=exact)
+        BackgroundSubtract = 5, //!< Alpha = foreground vs. a temporally-averaged background. value=threshold, decay=learn rate
+    };
+
+    /**
+     * @brief Parameters controlling how the per-pixel alpha (mask) is derived.
+     * The meaning of value/decay depends on the mode (see AlphaMode).
+     */
+    struct AlphaParams
+    {
+        AlphaMode mode{AlphaMode::Source};
+        float value{1.0f};  //!< Motion/Decay: scale. Constant: alpha. ChromaKey: tolerance (0..1, 0=exact). BgSubtract: threshold (0..1).
+        float init{1.0f};   //!< Alpha for the very first frame (no history yet).
+        float decay{0.9f};  //!< MotionDecay: per-frame persistence (0..1). BackgroundSubtract: background learning rate (set low, e.g. 0.02).
+        int cleanup{0};     //!< Morphological mask cleanup iterations (0 = off). Each iter = an open + close pass.
     };
 
     VideoTexture(int texWidth, int texHeight, int depth);
-    ~VideoTexture() = default;
+    ~VideoTexture();
 
     VideoTexture(const VideoTexture&) = delete;
     auto operator=(const VideoTexture&) -> VideoTexture& = delete;
@@ -59,7 +76,14 @@ public:
      * @brief Uploads the most recently staged frame, if any, to the next ring-buffer slice.
      * Must be called on the GL thread.
      */
-    void UpdateGPU(AlphaMode alphaMode, float alphaValue, float alphaInit, float alphaDecay);
+    void UpdateGPU(const AlphaParams& params);
+
+    /**
+     * @brief Sets the ChromaKey background color (normalized 0..1), supplied by the
+     * application (it depends on the camera/scene, not the preset). Defaults to black,
+     * which doubles as the virtual-green-screen sentinel.
+     */
+    void SetChromaKey(float r, float g, float b);
 
     int Width() const { return m_texWidth; }
     int Height() const { return m_texHeight; }
@@ -76,8 +100,8 @@ public:
 
 private:
     void CreateTexture();
+    void CreateGpuResources();
     void ConvertAndDownscale(const uint8_t* src, int srcW, int srcH, PixelFormat fmt, uint8_t* dst);
-    void ComputeAlpha(uint8_t* rgba, AlphaMode mode, float value, float initValue, float decay);
 
     const int m_texWidth;
     const int m_texHeight;
@@ -90,12 +114,26 @@ private:
     std::vector<uint8_t> m_stagingBuffer;
     bool m_hasPendingFrame{false};
 
-    std::vector<uint8_t> m_workBuffer;
-    std::vector<uint8_t> m_previousRGB;
-    std::vector<uint8_t> m_previousAlpha; //!< Last frame's alpha, used by MotionDecay.
+    std::vector<uint8_t> m_workBuffer; //!< Downscaled RGBA frame ready for GPU upload.
     bool m_hasPreviousFrame{false};
+    bool m_hasBackground{false};       //!< Whether the GPU background model has been seeded.
+
+    float m_keyR{0.0f}; //!< ChromaKey background color (app-supplied, normalized). Default black sentinel.
+    float m_keyG{0.0f};
+    float m_keyB{0.0f};
     int m_writeIndex{-1};
     uint32_t m_frameCount{0};
+
+    // GPU preprocessing resources (raw GL object names; created/destroyed on the GL thread).
+    std::unique_ptr<Shader> m_preprocessShader;
+    std::unique_ptr<Shader> m_morphShader; //!< Erode/dilate pass for mask cleanup.
+    uint32_t m_inputTex{0};      //!< 2D RGBA8: the uploaded downscaled camera frame.
+    uint32_t m_prevTex[2]{0, 0}; //!< 2D RGBA16F ping-pong: processed [rawRGB, alpha].
+    uint32_t m_bgTex[2]{0, 0};   //!< 2D RGBA16F ping-pong: background model.
+    uint32_t m_morphTex[2]{0, 0};//!< 2D RGBA16F scratch ping-pong for morphology passes.
+    uint32_t m_fbo{0};
+    uint32_t m_vao{0};
+    int m_pingPong{0};           //!< Index of the ping-pong slot written this frame.
 };
 
 } // namespace Renderer

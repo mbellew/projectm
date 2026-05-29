@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 class VideoCapture
 {
@@ -33,9 +34,13 @@ public:
     /**
      * Requests camera access and begins capture. Blocks briefly while the user
      * responds to the system permission prompt on first use.
+     * @param callback Per-frame callback invoked from a capture-backend thread.
+     * @param deviceNameSubstring Case-insensitive substring matched against device
+     *        localized names (e.g. "OBS" to pick the OBS Virtual Camera). Empty
+     *        string selects the system default video device.
      * @return true if capture started; false if denied or unsupported.
      */
-    bool Start(FrameCallback callback);
+    bool Start(FrameCallback callback, const std::string& deviceNameSubstring = {});
 
     /** Stops capture and releases the device. */
     void Stop();

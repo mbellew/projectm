@@ -116,6 +116,7 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(video_alpha_value);
     REG_VAR(video_alpha_init);
     REG_VAR(video_alpha_decay);
+    REG_VAR(video_cleanup);
 }
 
 void PerFrameContext::EvaluateInitCode(PresetState& state)
@@ -241,6 +242,7 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *video_alpha_value = static_cast<PRJM_EVAL_F>(state.videoAlphaValue);
     *video_alpha_init = static_cast<PRJM_EVAL_F>(state.videoAlphaInit);
     *video_alpha_decay = static_cast<PRJM_EVAL_F>(state.videoAlphaDecay);
+    *video_cleanup = static_cast<PRJM_EVAL_F>(state.videoCleanup);
 }
 
 void PerFrameContext::CompilePerFrameCode(const std::string& perFrameCode)

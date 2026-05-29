@@ -97,7 +97,7 @@ VideoCapture::~VideoCapture()
     Stop();
 }
 
-bool VideoCapture::Start(FrameCallback callback)
+bool VideoCapture::Start(FrameCallback callback, const std::string& deviceNameSubstring)
 {
     if (m_impl->running)
     {
@@ -120,7 +120,62 @@ bool VideoCapture::Start(FrameCallback callback)
         return false;
     }
 
-    AVCaptureDevice* device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    // Trim surrounding whitespace and treat a blank value as "unspecified" so that
+    // e.g. PROJECTM_VIDEO_DEVICE="" (or whitespace/newline) falls back to the default.
+    std::string trimmedName;
+    const auto firstNonSpace = deviceNameSubstring.find_first_not_of(" \t\r\n");
+    if (firstNonSpace != std::string::npos)
+    {
+        const auto lastNonSpace = deviceNameSubstring.find_last_not_of(" \t\r\n");
+        trimmedName = deviceNameSubstring.substr(firstNonSpace, lastNonSpace - firstNonSpace + 1);
+    }
+
+    AVCaptureDevice* device = nil;
+    if (!trimmedName.empty())
+    {
+        // Enumerate all video-capable devices including virtual cameras (OBS, etc.).
+        // externalUnknown covers DAL plug-ins like OBS Virtual Camera; on macOS 14+
+        // it's preferred over the deprecated AVCaptureDevice +devicesWithMediaType:.
+        NSArray<AVCaptureDeviceType>* deviceTypes = @[
+            AVCaptureDeviceTypeBuiltInWideAngleCamera,
+#if defined(MAC_OS_VERSION_14_0) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_VERSION_14_0
+            AVCaptureDeviceTypeExternal,
+#else
+            AVCaptureDeviceTypeExternalUnknown,
+#endif
+        ];
+        AVCaptureDeviceDiscoverySession* discovery =
+            [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:deviceTypes
+                                                                   mediaType:AVMediaTypeVideo
+                                                                    position:AVCaptureDevicePositionUnspecified];
+
+        NSString* needle = [[NSString stringWithUTF8String:trimmedName.c_str()] lowercaseString];
+        NSMutableArray<NSString*>* names = [NSMutableArray array];
+        for (AVCaptureDevice* d in discovery.devices)
+        {
+            [names addObject:d.localizedName];
+            if (!device && [[d.localizedName lowercaseString] containsString:needle])
+            {
+                device = d;
+            }
+        }
+        if (!device)
+        {
+            // No match: warn and fall back to the system default rather than failing.
+            NSLog(@"[VideoCapture] No device matches \"%s\"; falling back to default. Available: %@",
+                  trimmedName.c_str(), names);
+            device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+        }
+        else
+        {
+            NSLog(@"[VideoCapture] Selected video device: %@", device.localizedName);
+        }
+    }
+    else
+    {
+        device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    }
+
     if (!device)
     {
         return false;

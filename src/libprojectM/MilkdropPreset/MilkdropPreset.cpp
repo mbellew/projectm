@@ -207,13 +207,15 @@ void MilkdropPreset::PerFrameUpdate()
     {
         int mode = static_cast<int>(*m_perFrameContext.video_alpha_mode);
         if (mode < 0) mode = 0;
-        if (mode > 3) mode = 3;
+        if (mode > 5) mode = 5;
 
-        m_state.renderContext.videoTexture->UpdateGPU(
-            static_cast<Renderer::VideoTexture::AlphaMode>(mode),
-            static_cast<float>(*m_perFrameContext.video_alpha_value),
-            static_cast<float>(*m_perFrameContext.video_alpha_init),
-            static_cast<float>(*m_perFrameContext.video_alpha_decay));
+        Renderer::VideoTexture::AlphaParams params;
+        params.mode = static_cast<Renderer::VideoTexture::AlphaMode>(mode);
+        params.value = static_cast<float>(*m_perFrameContext.video_alpha_value);
+        params.init = static_cast<float>(*m_perFrameContext.video_alpha_init);
+        params.decay = static_cast<float>(*m_perFrameContext.video_alpha_decay);
+        params.cleanup = static_cast<int>(*m_perFrameContext.video_cleanup);
+        m_state.renderContext.videoTexture->UpdateGPU(params);
 
         m_state.renderContext.videoZWrite = m_state.renderContext.videoTexture->NormalizedWritePosition();
         m_state.renderContext.videoZRange = m_state.renderContext.videoTexture->NormalizedRange();

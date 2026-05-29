@@ -1,0 +1,6 @@
+comp_35=`// Motion-driven color negative: use ONLY the video motion alpha (not its RGB).
+comp_36=`// Where detected motion exceeds the threshold, invert the composite color
+comp_37=`// like a film negative.
+comp_38=`float vmotion = GetVideo(uv, 0.0).a;
+comp_39=`float vthreshold = 0.3;
+comp_40=`if (vmotion > vthreshold) ret = 1.0 - ret;

@@ -146,6 +146,7 @@ public:
     PRJM_EVAL_F* video_alpha_value{};
     PRJM_EVAL_F* video_alpha_init{};
     PRJM_EVAL_F* video_alpha_decay{};
+    PRJM_EVAL_F* video_cleanup{};
 
     PRJM_EVAL_F q_values_after_init_code[QVarCount]{};
 };

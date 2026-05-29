@@ -232,19 +232,43 @@ projectMSDL *setupSDLApp() {
     // load configuration file
     std::string configFilePath = getConfigFilePath(base_path);
 
-    // Allow overriding the preset directory via $PROJECTM_PRESET_PATH for development.
-    std::string presetURL;
-    if (const char* presetEnv = getenv("PROJECTM_PRESET_PATH"))
+    // Allow overriding the preset source via $PROJECTM_PRESET_LIST (favorites file)
+    // or $PROJECTM_PRESET_PATH (directory) for development.
+    if (const char* listEnv = getenv("PROJECTM_PRESET_LIST"))
     {
-        presetURL = presetEnv;
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using preset path from $PROJECTM_PRESET_PATH: %s\n", presetURL.c_str());
+        std::vector<std::string> presetList;
+        std::ifstream in(listEnv);
+        if (!in)
+        {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Failed to open $PROJECTM_PRESET_LIST file: %s\n", listEnv);
+        }
+        std::string line;
+        while (std::getline(in, line))
+        {
+            if (line.empty() || line[0] == '#')
+            {
+                continue;
+            }
+            presetList.push_back(line);
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using preset list from $PROJECTM_PRESET_LIST: %s (%zu entries)\n",
+                    listEnv, presetList.size());
+        app = new projectMSDL(glCtx, presetList);
     }
     else
     {
-        presetURL = base_path + "/presets";
+        std::string presetURL;
+        if (const char* presetEnv = getenv("PROJECTM_PRESET_PATH"))
+        {
+            presetURL = presetEnv;
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using preset path from $PROJECTM_PRESET_PATH: %s\n", presetURL.c_str());
+        }
+        else
+        {
+            presetURL = base_path + "/presets";
+        }
+        app = new projectMSDL(glCtx, presetURL);
     }
-
-    app = new projectMSDL(glCtx, presetURL);
 
     if (! configFilePath.empty())
     {
@@ -290,7 +314,22 @@ projectMSDL *setupSDLApp() {
 
     // Allocate the video-history 3D texture BEFORE init() starts camera capture,
     // otherwise frames between camera-start and configure are silently dropped.
-    projectm_video_configure(app->projectM(), 256, 144, 120);
+    // VGA spatial resolution, 120 frames of history.
+    projectm_video_configure(app->projectM(), 640, 480, 120);
+
+    // The chroma-key color is a scene/camera property the application owns (not the
+    // preset). Override the default black sentinel via $PROJECTM_VIDEO_CHROMA_KEY="r,g,b"
+    // (normalized 0..1), e.g. "0,1,0" for a real green screen.
+    if (const char* keyEnv = getenv("PROJECTM_VIDEO_CHROMA_KEY"))
+    {
+        float kr = 0.0f, kg = 0.0f, kb = 0.0f;
+        if (sscanf(keyEnv, "%f,%f,%f", &kr, &kg, &kb) == 3)
+        {
+            projectm_video_set_chroma_key(app->projectM(), kr, kg, kb);
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Using chroma key from $PROJECTM_VIDEO_CHROMA_KEY: %.3f,%.3f,%.3f\n", kr, kg, kb);
+        }
+    }
 
     app->init(win);
 
@@ -304,8 +343,9 @@ projectMSDL *setupSDLApp() {
     configureLoopback(app);
 
 #if !FAKE_AUDIO && !WASAPI_LOOPBACK
-    // get an audio input device
-    if (app->openAudioInput())
+    // get an audio input device (optionally selected by name via $PROJECTM_AUDIO_DEVICE)
+    const char* audioDevice = getenv("PROJECTM_AUDIO_DEVICE");
+    if (app->openAudioInput(audioDevice))
         app->beginAudioCapture();
 #endif
 

@@ -63,6 +63,7 @@
 #include <iostream>
 #include <string>
 #include <sys/stat.h>
+#include <vector>
 
 #ifdef WASAPI_LOOPBACK
 #include <windows.h>
@@ -112,11 +113,12 @@ class projectMSDL
 
 public:
     projectMSDL(SDL_GLContext glCtx, const std::string& presetPath);
+    projectMSDL(SDL_GLContext glCtx, const std::vector<std::string>& presetList);
 
     ~projectMSDL();
 
     void init(SDL_Window* window, const bool renderToTexture = false);
-    int openAudioInput();
+    int openAudioInput(const char* deviceName = nullptr);
     int toggleAudioInput();
     int initAudioInput();
     void beginAudioCapture();
@@ -138,6 +140,7 @@ public:
     void pollEvent();
     bool keymod = false;
     std::string getActivePresetName();
+    void addCurrentPresetToFavorites();
     void addFakePCM();
     projectm_handle projectM();
     void setFps(size_t fps);

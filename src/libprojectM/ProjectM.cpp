@@ -605,6 +605,14 @@ void ProjectM::VideoSubmitFrame(const void* data, int srcWidth, int srcHeight, i
                                 static_cast<Renderer::VideoTexture::PixelFormat>(format));
 }
 
+void ProjectM::VideoSetChromaKey(float r, float g, float b)
+{
+    if (m_videoTexture)
+    {
+        m_videoTexture->SetChromaKey(r, g, b);
+    }
+}
+
 auto ProjectM::VideoIsActive() const -> bool
 {
     return m_videoTexture != nullptr;

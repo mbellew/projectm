@@ -1,0 +1,20 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+fDecay=0
+warp=0.000000
+wave_a=0
+per_frame_1=// Background subtraction (video_alpha_mode=5). Stand still so the model learns
+per_frame_2=// the scene, then move: foreground (moving) pixels keep color, background = black.
+per_frame_3=video_alpha_mode = 5;
+per_frame_4=video_alpha_value = 0.10;
+per_frame_5=video_alpha_decay = 0.05;
+per_frame_6=video_alpha_init = 0.0;
+per_frame_7=video_cleanup = 2;
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float4 vid = GetVideo(uv, 0.0);
+comp_4=`    ret = vid.rgb * vid.a;
+comp_5=`}

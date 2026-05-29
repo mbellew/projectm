@@ -290,6 +290,12 @@ public:
     void VideoSubmitFrame(const void* data, int srcWidth, int srcHeight, int format);
 
     /**
+     * @brief Sets the chroma-key background color (normalized 0..1) for the video
+     * ChromaKey alpha mode. Supplied by the application (scene/camera dependent).
+     */
+    void VideoSetChromaKey(float r, float g, float b);
+
+    /**
      * @brief Returns true if the video-history texture has been configured.
      */
     auto VideoIsActive() const -> bool;

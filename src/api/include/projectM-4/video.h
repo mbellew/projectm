@@ -75,6 +75,23 @@ PROJECTM_EXPORT void projectm_video_submit_frame(projectm_handle instance,
                                                  projectm_video_format format);
 
 /**
+ * @brief Sets the chroma-key background color for the video ChromaKey alpha mode.
+ *
+ * The key color is scene/camera dependent (the real green-screen color, or the
+ * application's virtual-green-screen sentinel), so it is supplied by the application
+ * rather than by presets. Components are normalized [0,1]. Defaults to black (0,0,0),
+ * which is also the recommended virtual-green-screen sentinel.
+ *
+ * @param instance The projectM instance handle.
+ * @param r Red component, 0..1.
+ * @param g Green component, 0..1.
+ * @param b Blue component, 0..1.
+ * @since 4.2.0
+ */
+PROJECTM_EXPORT void projectm_video_set_chroma_key(projectm_handle instance,
+                                                   float r, float g, float b);
+
+/**
  * @brief Returns true if the video-history texture has been configured.
  *
  * @param instance The projectM instance handle.

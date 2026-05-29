@@ -507,6 +507,12 @@ void projectm_video_submit_frame(projectm_handle instance,
                                        static_cast<int>(format));
 }
 
+void projectm_video_set_chroma_key(projectm_handle instance, float r, float g, float b)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->VideoSetChromaKey(r, g, b);
+}
+
 bool projectm_video_is_active(projectm_handle instance)
 {
     auto* projectMInstance = handle_to_instance(instance);

@@ -1,6 +1,8 @@
 #include "audioCapture.hpp"
 #include "pmSDL.hpp"
 
+#include <cstring>
+
 
 int projectMSDL::initAudioInput() {
     // params for audio input
@@ -96,7 +98,7 @@ int projectMSDL::toggleAudioInput() {
     return 1;
 }
 
-int projectMSDL::openAudioInput() {
+int projectMSDL::openAudioInput(const char* deviceName) {
     fakeAudio = false; // if we are opening an audio input then there is no need for fake audio.
     // get audio driver name (static)
 #ifdef DEBUG
@@ -113,12 +115,28 @@ int projectMSDL::openAudioInput() {
     }
 #endif
 
-    // We start with the system default capture device (index -1).
-    // Note: this might work even if NumAudioDevices == 0 (example: if only a
+    int initialDevice = -1;
+    if (deviceName && deviceName[0])
+    {
+        for (unsigned int i = 0; i < _numAudioDevices; i++) {
+            const char* name = SDL_GetAudioDeviceName(i, true);
+            if (name && strcmp(name, deviceName) == 0) {
+                initialDevice = static_cast<int>(i);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Selected audio device '%s' at index %d", deviceName, initialDevice);
+                break;
+            }
+        }
+        if (initialDevice == -1) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Requested audio device '%s' not found; falling back to default", deviceName);
+        }
+    }
+
+    // We start with the system default capture device (index -1) unless overridden by name.
+    // Note: the default might work even if NumAudioDevices == 0 (example: if only a
     // monitor device exists, and SDL_HINT_AUDIO_INCLUDE_MONITORS is not set).
     // So we always try it, and revert to fakeAudio if the default fails _and_ NumAudioDevices == 0.
-    _curAudioDevice = -1;
-    _selectedAudioDevice = -1;
+    _curAudioDevice = initialDevice;
+    _selectedAudioDevice = initialDevice;
     if(!initAudioInput() && _numAudioDevices == 0) {
         // the default device doesn't work, and there's no other device to try
         SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "No audio capture devices found");
