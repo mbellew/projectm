@@ -54,12 +54,36 @@ public:
     void CompilePerPixelCode(const std::string& perPixelCode);
 
     /**
+     * @brief Copies the per-frame input variables from another context into this one.
+     *
+     * Used to prepare worker contexts for parallel per-pixel evaluation: it mirrors the values
+     * set by LoadStateReadOnlyVariables() and LoadPerFrameQVariables() on the source context.
+     * The per-vertex inputs (x/y/rad/ang) and the per-frame motion outputs (zoom..sy) are not
+     * copied, as they are assigned fresh for every vertex during evaluation.
+     * @param source The context to copy the per-frame state from.
+     */
+    void CopyPerFrameState(const PerPixelContext& source);
+
+    /**
      * @brief Executes the per-pixel code with the current state.
      */
     void ExecutePerPixelCode();
 
+    /**
+     * @brief Returns whether the per-pixel code must be evaluated serially.
+     *
+     * True if the compiled code accesses any memory buffer (megabuf or gmegabuf), any of the
+     * reg00-reg99 registers, or calls rand(). gmegabuf, the registers and rand()'s RNG state are
+     * shared across contexts; the context-local megabuf is per-context but can carry state from
+     * one vertex to the next, which parallel evaluation would not preserve. In all of these cases
+     * the per-pixel loop cannot be safely or deterministically split across vertices.
+     * @return True if the code requires serial evaluation, false otherwise (or if there is no code).
+     */
+    bool RequiresSerialEvaluation() const;
+
     projectm_eval_context* perPixelCodeContext{nullptr}; //!< The code runtime context, holds memory buffers and variables.
     projectm_eval_code* perPixelCodeHandle{nullptr};     //!< The compiled per-pixel code handle.
+    int perPixelGlobalAccess{PRJM_EVAL_ACCESS_NONE};     //!< Bitmask of shared state accessed by the compiled code.
 
     PRJM_EVAL_F* zoom{};
     PRJM_EVAL_F* zoomexp{};

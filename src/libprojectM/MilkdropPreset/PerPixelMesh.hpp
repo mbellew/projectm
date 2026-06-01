@@ -1,7 +1,13 @@
 #pragma once
 
+#include "ThreadPool.hpp"
+
 #include <Renderer/Mesh.hpp>
 #include <Renderer/Shader.hpp>
+
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace libprojectM {
 namespace MilkdropPreset {
@@ -28,6 +34,7 @@ class PerPixelMesh
 {
 public:
     PerPixelMesh();
+    ~PerPixelMesh(); //!< Out-of-line to destroy unique_ptrs to incomplete/forward-declared types.
 
     /**
      * @brief Loads the warp shader, if the preset uses one.
@@ -103,6 +110,39 @@ private:
                        PerPixelContext& perPixelContext);
 
     /**
+     * @brief Evaluates the per-pixel transform for a contiguous range of mesh vertices.
+     *
+     * Operates only on the given context and the [firstVertex, firstVertex + vertexCount) slice
+     * of the output buffers, so disjoint ranges can run concurrently on separate contexts.
+     * @param presetState The preset state to retrieve the configuration values from.
+     * @param perFrameContext The per-frame context to retrieve the initial vars from.
+     * @param perPixelContext The per-pixel code context to evaluate with.
+     * @param firstVertex Index of the first vertex to process.
+     * @param vertexCount Number of vertices to process.
+     */
+    void CalculateMeshRange(const PresetState& presetState,
+                            const PerFrameContext& perFrameContext,
+                            PerPixelContext& perPixelContext,
+                            int firstVertex,
+                            int vertexCount);
+
+    /**
+     * @brief Determines how many partitions the per-pixel loop should be split into.
+     * @param vertexCount Total number of mesh vertices.
+     * @return The partition count, clamped to the available hardware and a sensible minimum
+     *         workload per partition. A value of 1 means serial evaluation.
+     */
+    int DesiredPartitionCount(int vertexCount) const;
+
+    /**
+     * @brief Lazily creates and compiles the worker contexts used for parallel evaluation.
+     * Rebuilds them if the per-pixel code or the requested count changed.
+     * @param presetState The preset state providing the code, global memory and registers.
+     * @param workerCount Number of worker contexts required (partition count minus one).
+     */
+    void EnsureWorkerContexts(const PresetState& presetState, int workerCount);
+
+    /**
      * @brief Draws the warp mesh with or without a warp shader.
      * If the preset doesn't use a warp shader, a default textured shader is used.
      */
@@ -131,6 +171,10 @@ private:
     std::weak_ptr<Renderer::Shader> m_perPixelMeshShader;             //!< Special shader which calculates the per-pixel UV coordinates.
     std::unique_ptr<MilkdropShader> m_warpShader;                     //!< The warp shader. Either preset-defined or a default shader.
     Renderer::Sampler m_perPixelSampler{GL_CLAMP_TO_EDGE, GL_LINEAR}; //!< The main texture sampler.
+
+    std::unique_ptr<ThreadPool> m_threadPool;                            //!< Worker pool for parallel per-pixel evaluation, created on first use.
+    std::vector<std::unique_ptr<PerPixelContext>> m_workerContexts;      //!< Extra per-pixel contexts, one per worker partition.
+    std::string m_workerCode;                                           //!< Per-pixel code the worker contexts were compiled with.
 };
 
 } // namespace MilkdropPreset

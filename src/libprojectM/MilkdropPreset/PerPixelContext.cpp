@@ -99,6 +99,30 @@ void PerPixelContext::LoadPerFrameQVariables(PresetState& state, PerFrameContext
     }
 }
 
+void PerPixelContext::CopyPerFrameState(const PerPixelContext& source)
+{
+    *time = *source.time;
+    *fps = *source.fps;
+    *frame = *source.frame;
+    *progress = *source.progress;
+    *bass = *source.bass;
+    *mid = *source.mid;
+    *treb = *source.treb;
+    *bass_att = *source.bass_att;
+    *mid_att = *source.mid_att;
+    *treb_att = *source.treb_att;
+    *meshx = *source.meshx;
+    *meshy = *source.meshy;
+    *pixelsx = *source.pixelsx;
+    *pixelsy = *source.pixelsy;
+    *aspectx = *source.aspectx;
+    *aspecty = *source.aspecty;
+    for (int q = 0; q < QVarCount; q++)
+    {
+        *q_vars[q] = *source.q_vars[q];
+    }
+}
+
 void PerPixelContext::CompilePerPixelCode(const std::string& perPixelCode)
 {
     if (perPixelCode.empty())
@@ -126,6 +150,8 @@ void PerPixelContext::CompilePerPixelCode(const std::string& perPixelCode)
         LOG_DEBUG("[PerPixelContext] Failed per-pixel code:\n" + perPixelCode);
         throw MilkdropCompileException(error);
     }
+
+    perPixelGlobalAccess = projectm_eval_code_global_access(perPixelCodeHandle);
 }
 
 void PerPixelContext::ExecutePerPixelCode()
@@ -134,6 +160,14 @@ void PerPixelContext::ExecutePerPixelCode()
     {
         projectm_eval_code_execute(perPixelCodeHandle);
     }
+}
+
+bool PerPixelContext::RequiresSerialEvaluation() const
+{
+    return (perPixelGlobalAccess & (PRJM_EVAL_ACCESS_MEGABUF |
+                                    PRJM_EVAL_ACCESS_GMEGABUF |
+                                    PRJM_EVAL_ACCESS_REGISTERS |
+                                    PRJM_EVAL_ACCESS_RAND)) != 0;
 }
 
 } // namespace MilkdropPreset

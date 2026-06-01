@@ -197,79 +197,54 @@ void PerPixelMesh::InitializeMesh(const PresetState& presetState)
     }
 }
 
+namespace {
+constexpr int kMaxPartitions = 8;             //!< Upper bound on parallel partitions, regardless of core count.
+constexpr int kMinVerticesPerPartition = 1024; //!< Minimum work per partition before splitting further.
+} // namespace
+
+PerPixelMesh::~PerPixelMesh() = default;
+
 void PerPixelMesh::CalculateMesh(const PresetState& presetState, const PerFrameContext& perFrameContext, PerPixelContext& perPixelContext)
 {
-    // Cache some per-frame values as floats
-    float zoom = static_cast<float>(*perFrameContext.zoom);
-    float zoomExp = static_cast<float>(*perFrameContext.zoomexp);
-    float rot = static_cast<float>(*perFrameContext.rot);
-    float warp = static_cast<float>(*perFrameContext.warp);
-    float cx = static_cast<float>(*perFrameContext.cx);
-    float cy = static_cast<float>(*perFrameContext.cy);
-    float dx = static_cast<float>(*perFrameContext.dx);
-    float dy = static_cast<float>(*perFrameContext.dy);
-    float sx = static_cast<float>(*perFrameContext.sx);
-    float sy = static_cast<float>(*perFrameContext.sy);
+    const int totalVertices = (m_gridSizeX + 1) * (m_gridSizeY + 1);
 
-    int vertex = 0;
+    // The loop can be split across vertices (each partition using its own evaluation context)
+    // only when the per-pixel code touches no memory buffers (megabuf/gmegabuf), registers or
+    // rand() - see PerPixelContext::RequiresSerialEvaluation(). That restricts parallel evaluation
+    // to code with per-vertex independence, which is the documented per-pixel model.
+    const int partitionCount =
+        (perPixelContext.perPixelCodeHandle != nullptr && !perPixelContext.RequiresSerialEvaluation())
+            ? DesiredPartitionCount(totalVertices)
+            : 1;
 
-    // Can't make this multithreaded as per-pixel code may use gmegabuf or regXX vars.
-    auto& vertices = m_warpMesh.Vertices();
-    for (int y = 0; y <= m_gridSizeY; y++)
+    if (partitionCount <= 1)
     {
-        for (int x = 0; x <= m_gridSizeX; x++)
+        CalculateMeshRange(presetState, perFrameContext, perPixelContext, 0, totalVertices);
+    }
+    else
+    {
+        EnsureWorkerContexts(presetState, partitionCount - 1);
+
+        // Mirror the per-frame inputs into each worker so all partitions evaluate identically.
+        for (auto& workerContext : m_workerContexts)
         {
-            auto& curVertex = vertices[vertex];
-            auto& curRadiusAngle = m_radiusAngleBuffer[vertex];
-            auto& curZoomRotWarp = m_zoomRotWarpBuffer[vertex];
-            auto& curCenter = m_centerBuffer[vertex];
-            auto& curDistance = m_distanceBuffer[vertex];
-            auto& curStretch = m_stretchBuffer[vertex];
-
-            // Execute per-vertex/per-pixel code if the preset uses it.
-            if (perPixelContext.perPixelCodeHandle)
-            {
-                *perPixelContext.x = static_cast<double>(curVertex.X() * 0.5f * presetState.renderContext.aspectX + 0.5f);
-                *perPixelContext.y = static_cast<double>(curVertex.Y() * 0.5f * presetState.renderContext.aspectY + 0.5f);
-                *perPixelContext.rad = static_cast<double>(curRadiusAngle.radius);
-                *perPixelContext.ang = static_cast<double>(-curRadiusAngle.angle);
-                *perPixelContext.zoom = static_cast<double>(*perFrameContext.zoom);
-                *perPixelContext.zoomexp = static_cast<double>(*perFrameContext.zoomexp);
-                *perPixelContext.rot = static_cast<double>(*perFrameContext.rot);
-                *perPixelContext.warp = static_cast<double>(*perFrameContext.warp);
-                *perPixelContext.cx = static_cast<double>(*perFrameContext.cx);
-                *perPixelContext.cy = static_cast<double>(*perFrameContext.cy);
-                *perPixelContext.dx = static_cast<double>(*perFrameContext.dx);
-                *perPixelContext.dy = static_cast<double>(*perFrameContext.dy);
-                *perPixelContext.sx = static_cast<double>(*perFrameContext.sx);
-                *perPixelContext.sy = static_cast<double>(*perFrameContext.sy);
-
-                perPixelContext.ExecutePerPixelCode();
-
-                curZoomRotWarp.zoom = static_cast<float>(*perPixelContext.zoom);
-                curZoomRotWarp.zoomExp = static_cast<float>(*perPixelContext.zoomexp);
-                curZoomRotWarp.rot = static_cast<float>(*perPixelContext.rot);
-                curZoomRotWarp.warp = static_cast<float>(*perPixelContext.warp);
-                curCenter = {static_cast<float>(*perPixelContext.cx),
-                             static_cast<float>(*perPixelContext.cy)};
-                curDistance = {static_cast<float>(*perPixelContext.dx),
-                               static_cast<float>(*perPixelContext.dy)};
-                curStretch = {static_cast<float>(*perPixelContext.sx),
-                              static_cast<float>(*perPixelContext.sy)};
-            }
-            else
-            {
-                curZoomRotWarp.zoom = zoom;
-                curZoomRotWarp.zoomExp = zoomExp;
-                curZoomRotWarp.rot = rot;
-                curZoomRotWarp.warp = warp;
-                curCenter = { cx, cy};
-                curDistance = {dx, dy};
-                curStretch = {sx, sy};
-            }
-
-            vertex++;
+            workerContext->CopyPerFrameState(perPixelContext);
         }
+
+        // Split the vertices into contiguous, near-equal partitions. Partition 0 runs on the
+        // calling thread using the main context; partition p uses worker context p - 1.
+        const int baseCount = totalVertices / partitionCount;
+        const int remainder = totalVertices % partitionCount;
+
+        m_threadPool->Run(
+            [&](size_t partition) {
+                const int index = static_cast<int>(partition);
+                const int first = index * baseCount + std::min(index, remainder);
+                const int count = baseCount + (index < remainder ? 1 : 0);
+                PerPixelContext& context = (index == 0) ? perPixelContext : *m_workerContexts[index - 1];
+                CalculateMeshRange(presetState, perFrameContext, context, first, count);
+            },
+            static_cast<size_t>(partitionCount));
     }
 
     m_warpMesh.Update();
@@ -278,6 +253,124 @@ void PerPixelMesh::CalculateMesh(const PresetState& presetState, const PerFrameC
     m_centerBuffer.Update();
     m_distanceBuffer.Update();
     m_stretchBuffer.Update();
+}
+
+void PerPixelMesh::CalculateMeshRange(const PresetState& presetState,
+                                      const PerFrameContext& perFrameContext,
+                                      PerPixelContext& perPixelContext,
+                                      int firstVertex,
+                                      int vertexCount)
+{
+    // Cache some per-frame values as floats (used when the preset has no per-pixel code).
+    const float zoom = static_cast<float>(*perFrameContext.zoom);
+    const float zoomExp = static_cast<float>(*perFrameContext.zoomexp);
+    const float rot = static_cast<float>(*perFrameContext.rot);
+    const float warp = static_cast<float>(*perFrameContext.warp);
+    const float cx = static_cast<float>(*perFrameContext.cx);
+    const float cy = static_cast<float>(*perFrameContext.cy);
+    const float dx = static_cast<float>(*perFrameContext.dx);
+    const float dy = static_cast<float>(*perFrameContext.dy);
+    const float sx = static_cast<float>(*perFrameContext.sx);
+    const float sy = static_cast<float>(*perFrameContext.sy);
+
+    auto& vertices = m_warpMesh.Vertices();
+    for (int vertex = firstVertex; vertex < firstVertex + vertexCount; vertex++)
+    {
+        auto& curVertex = vertices[vertex];
+        auto& curRadiusAngle = m_radiusAngleBuffer[vertex];
+        auto& curZoomRotWarp = m_zoomRotWarpBuffer[vertex];
+        auto& curCenter = m_centerBuffer[vertex];
+        auto& curDistance = m_distanceBuffer[vertex];
+        auto& curStretch = m_stretchBuffer[vertex];
+
+        // Execute per-vertex/per-pixel code if the preset uses it.
+        if (perPixelContext.perPixelCodeHandle)
+        {
+            *perPixelContext.x = static_cast<double>(curVertex.X() * 0.5f * presetState.renderContext.aspectX + 0.5f);
+            *perPixelContext.y = static_cast<double>(curVertex.Y() * 0.5f * presetState.renderContext.aspectY + 0.5f);
+            *perPixelContext.rad = static_cast<double>(curRadiusAngle.radius);
+            *perPixelContext.ang = static_cast<double>(-curRadiusAngle.angle);
+            *perPixelContext.zoom = static_cast<double>(*perFrameContext.zoom);
+            *perPixelContext.zoomexp = static_cast<double>(*perFrameContext.zoomexp);
+            *perPixelContext.rot = static_cast<double>(*perFrameContext.rot);
+            *perPixelContext.warp = static_cast<double>(*perFrameContext.warp);
+            *perPixelContext.cx = static_cast<double>(*perFrameContext.cx);
+            *perPixelContext.cy = static_cast<double>(*perFrameContext.cy);
+            *perPixelContext.dx = static_cast<double>(*perFrameContext.dx);
+            *perPixelContext.dy = static_cast<double>(*perFrameContext.dy);
+            *perPixelContext.sx = static_cast<double>(*perFrameContext.sx);
+            *perPixelContext.sy = static_cast<double>(*perFrameContext.sy);
+
+            perPixelContext.ExecutePerPixelCode();
+
+            curZoomRotWarp.zoom = static_cast<float>(*perPixelContext.zoom);
+            curZoomRotWarp.zoomExp = static_cast<float>(*perPixelContext.zoomexp);
+            curZoomRotWarp.rot = static_cast<float>(*perPixelContext.rot);
+            curZoomRotWarp.warp = static_cast<float>(*perPixelContext.warp);
+            curCenter = {static_cast<float>(*perPixelContext.cx),
+                         static_cast<float>(*perPixelContext.cy)};
+            curDistance = {static_cast<float>(*perPixelContext.dx),
+                           static_cast<float>(*perPixelContext.dy)};
+            curStretch = {static_cast<float>(*perPixelContext.sx),
+                          static_cast<float>(*perPixelContext.sy)};
+        }
+        else
+        {
+            curZoomRotWarp.zoom = zoom;
+            curZoomRotWarp.zoomExp = zoomExp;
+            curZoomRotWarp.rot = rot;
+            curZoomRotWarp.warp = warp;
+            curCenter = {cx, cy};
+            curDistance = {dx, dy};
+            curStretch = {sx, sy};
+        }
+    }
+}
+
+int PerPixelMesh::DesiredPartitionCount(int vertexCount) const
+{
+    const unsigned int hardwareThreads = std::thread::hardware_concurrency();
+    int partitions = (hardwareThreads == 0) ? 1 : static_cast<int>(hardwareThreads);
+    partitions = std::min(partitions, kMaxPartitions);
+
+    // Keep enough work per partition that the threading overhead pays off.
+    partitions = std::min(partitions, std::max(1, vertexCount / kMinVerticesPerPartition));
+
+    return std::max(1, partitions);
+}
+
+void PerPixelMesh::EnsureWorkerContexts(const PresetState& presetState, int workerCount)
+{
+    if (m_threadPool == nullptr)
+    {
+        // Size the pool once to the maximum number of workers we may ever dispatch, so it does
+        // not need to be recreated when the mesh size (and thus the partition count) changes.
+        const unsigned int hardwareThreads = std::thread::hardware_concurrency();
+        const int cappedThreads = std::min(kMaxPartitions, (hardwareThreads == 0) ? 1 : static_cast<int>(hardwareThreads));
+        m_threadPool = std::make_unique<ThreadPool>(static_cast<size_t>(std::max(0, cappedThreads - 1)));
+    }
+
+    if (static_cast<int>(m_workerContexts.size()) == workerCount &&
+        m_workerCode == presetState.perPixelCode)
+    {
+        return;
+    }
+
+    m_workerContexts.clear();
+    m_workerCode = presetState.perPixelCode;
+
+    // reg00-reg99 are shared across contexts; parallel evaluation is only enabled when the code
+    // does not touch them, so handing all workers the same register array is safe.
+    auto* globalRegisters = const_cast<PRJM_EVAL_F(*)[100]>(&presetState.globalRegisters);
+
+    m_workerContexts.reserve(static_cast<size_t>(workerCount));
+    for (int i = 0; i < workerCount; i++)
+    {
+        auto context = std::make_unique<PerPixelContext>(presetState.globalMemory, globalRegisters);
+        context->RegisterBuiltinVariables();
+        context->CompilePerPixelCode(presetState.perPixelCode);
+        m_workerContexts.push_back(std::move(context));
+    }
 }
 
 void PerPixelMesh::WarpedBlit(const PresetState& presetState,

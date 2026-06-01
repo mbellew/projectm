@@ -80,6 +80,7 @@ add_library(MilkdropPreset OBJECT
         PresetState.hpp
         ShapePerFrameContext.cpp
         ShapePerFrameContext.hpp
+        ThreadPool.hpp
         VideoEcho.cpp
         VideoEcho.hpp
         Waveform.cpp
