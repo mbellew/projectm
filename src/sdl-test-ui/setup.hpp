@@ -22,7 +22,8 @@ void dumpOpenGLInfo();
 void initStereoscopicView(SDL_Window *win);
 void enableGLDebugOutput();
 void testAllPresets(projectMSDL *app);
-projectMSDL *setupSDLApp();
+// fullscreenOverride: -1 = use config "Fullscreen" value, 0 = force windowed, 1 = force fullscreen.
+projectMSDL *setupSDLApp(int fullscreenOverride = -1);
 int64_t startUnlockedFPSCounter();
 void advanceUnlockedFPSCounterFrame(int64_t startFrame);
 

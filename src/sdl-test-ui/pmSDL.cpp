@@ -99,21 +99,30 @@ void projectMSDL::startVideoCapture()
     }
 
     auto* handle = _projectM;
-    // $PROJECTM_VIDEO_DEVICE picks a non-default capture device by name substring,
-    // e.g. "OBS" to use the OBS Virtual Camera. Empty/unset = system default.
-    std::string deviceName;
+    // Source preference order: $PROJECTM_VIDEO_DEVICE (if set) wins, then the config
+    // "Video Devices" list, then the system default. Each entry is a case-insensitive
+    // name substring (e.g. "OBS" for the OBS Virtual Camera).
+    std::vector<std::string> preferredDevices;
     if (const char* envDev = std::getenv("PROJECTM_VIDEO_DEVICE"))
     {
-        deviceName = envDev;
+        if (envDev[0])
+        {
+            preferredDevices.emplace_back(envDev);
+        }
     }
+    preferredDevices.insert(preferredDevices.end(), _videoDevicePrefs.begin(), _videoDevicePrefs.end());
     const bool ok = _videoCapture->Start(
         [handle](const void* data, int width, int height, VideoCapture::PixelFormat fmt) {
             projectm_video_format pmFmt = PROJECTM_VIDEO_FORMAT_BGRA;
-            (void) fmt; // only BGRA emitted by the macOS backend today
+            switch (fmt)
+            {
+                case VideoCapture::PixelFormat::BGRA: pmFmt = PROJECTM_VIDEO_FORMAT_BGRA; break;
+                case VideoCapture::PixelFormat::BGRX: pmFmt = PROJECTM_VIDEO_FORMAT_BGRX; break;
+            }
             projectm_video_submit_frame(handle, data, static_cast<unsigned int>(width),
                                         static_cast<unsigned int>(height), pmFmt);
         },
-        deviceName);
+        preferredDevices);
 
     if (!ok)
     {
@@ -332,6 +341,12 @@ void projectMSDL::keyHandler(SDL_Event* sdl_evt)
             break;
 
         case SDLK_r:
+            if (sdl_mod & KMOD_LGUI || sdl_mod & KMOD_RGUI || sdl_mod & KMOD_LCTRL)
+            {
+                // cmd/ctrl-r: reload the current preset from disk (handy while editing a .milk).
+                projectm_playlist_set_position(_playlist, projectm_playlist_get_position(_playlist), true);
+                return; // handled
+            }
             // Use playlist shuffle to randomize.
             projectm_playlist_set_shuffle(_playlist, true);
             projectm_playlist_play_next(_playlist, true);
@@ -538,14 +553,62 @@ void projectMSDL::touchDestroyAll()
     projectm_touch_destroy_all(_projectM);
 }
 
+void projectMSDL::playInitialPreset()
+{
+    // If the playlist has any presets, jump straight to the first one instead of leaving the
+    // built-in idle preset up. set_position ignores shuffle and the preset lock, so this also
+    // works when the lock happens to be on at startup. Subsequent advances still respect both.
+    if (projectm_playlist_size(_playlist) > 0)
+    {
+        projectm_playlist_set_position(_playlist, 0, true);
+    }
+}
+
 void projectMSDL::renderFrame()
 {
+    const auto frameStart = std::chrono::steady_clock::now();
+
     glClearColor(0.0, 0.0, 0.0, 0.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     projectm_opengl_render_frame(_projectM);
 
     SDL_GL_SwapWindow(_sdlWindow);
+
+    trackFrameRate(frameStart);
+}
+
+void projectMSDL::trackFrameRate(std::chrono::steady_clock::time_point frameStart)
+{
+    const auto now = std::chrono::steady_clock::now();
+
+    if (!_fpsTrackerInitialized)
+    {
+        _fpsWindowStart = frameStart;
+        _fpsTrackerInitialized = true;
+    }
+
+    _fpsFrameCount++;
+    _fpsFrameMsAccum += std::chrono::duration<double, std::milli>(now - frameStart).count();
+
+    const double windowMs = std::chrono::duration<double, std::milli>(now - _fpsWindowStart).count();
+    if (windowMs >= 1000.0)
+    {
+        const double achievedFps = _fpsFrameCount * 1000.0 / windowMs;
+        const double avgFrameMs = _fpsFrameMsAccum / _fpsFrameCount;
+        const int target = static_cast<int>(_fps);
+        const bool belowTarget = target > 0 && achievedFps < target * 0.9;
+
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[FPS] %5.1f / %d target | %5.2f ms/frame | %s%s",
+                    achievedFps, target, avgFrameMs,
+                    _presetName.c_str(),
+                    belowTarget ? "  <-- BELOW TARGET" : "");
+
+        _fpsWindowStart = now;
+        _fpsFrameCount = 0;
+        _fpsFrameMsAccum = 0.0;
+    }
 }
 
 void projectMSDL::init(SDL_Window* window, const bool _renderToTexture)

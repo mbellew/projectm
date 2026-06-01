@@ -9,6 +9,26 @@
 #include <chrono>
 #include <cmath>
 
+// Split a semicolon-separated preference list (e.g. "OBS; FaceTime") into trimmed,
+// non-empty entries, preserving order. Used for the "Audio Devices"/"Video Devices" keys.
+static std::vector<std::string> splitPreferenceList(const std::string& value)
+{
+    std::vector<std::string> result;
+    std::stringstream ss(value);
+    std::string item;
+    while (std::getline(ss, item, ';'))
+    {
+        const auto first = item.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos)
+        {
+            continue;
+        }
+        const auto last = item.find_last_not_of(" \t\r\n");
+        result.push_back(item.substr(first, last - first + 1));
+    }
+    return result;
+}
+
 #if OGL_DEBUG
 void debugGL(GLenum source,
              GLenum type,
@@ -160,7 +180,7 @@ void logMessage(const char* message, projectm_log_level severity, void* userData
 }
 
 // initialize SDL, openGL, config
-projectMSDL *setupSDLApp() {
+projectMSDL *setupSDLApp(int fullscreenOverride) {
     projectMSDL *app;
     seedRand();
 
@@ -270,6 +290,11 @@ projectMSDL *setupSDLApp() {
         app = new projectMSDL(glCtx, presetURL);
     }
 
+    // Appliance settings read from config; applied after the window/app are fully set up.
+    bool startFullscreen = false;
+    bool videoMirror = false; //!< "Video Mirror" config option: horizontally flip the camera feed.
+    std::vector<std::string> audioDevicePrefs; // preference order, highest first
+
     if (! configFilePath.empty())
     {
         // found config file, load it
@@ -291,7 +316,19 @@ projectMSDL *setupSDLApp() {
         projectm_set_fps(projectMHandle, config.read<int32_t>("FPS", 60));
 
         app->setFps(config.read<uint32_t>("FPS", 60));
+
+        // Appliance: start fullscreen and pick capture sources by preference order.
+        startFullscreen = config.read<bool>("Fullscreen", false);
+        videoMirror = config.read<bool>("Video Mirror", false);
+        audioDevicePrefs = splitPreferenceList(config.read<std::string>("Audio Devices", std::string()));
+        app->setVideoDevicePrefs(splitPreferenceList(config.read<std::string>("Video Devices", std::string())));
     }
+
+    // CLI --fullscreen/--windowed overrides the config value (-1 = leave config value).
+    if (fullscreenOverride == 1)
+        startFullscreen = true;
+    else if (fullscreenOverride == 0)
+        startFullscreen = false;
 
     // center window and full desktop screen
     SDL_DisplayMode dm;
@@ -317,6 +354,9 @@ projectMSDL *setupSDLApp() {
     // VGA spatial resolution, 120 frames of history.
     projectm_video_configure(app->projectM(), 640, 480, 120);
 
+    // Optional global horizontal mirror of the camera feed ("Video Mirror" in config.inp).
+    projectm_video_set_mirror(app->projectM(), videoMirror);
+
     // The chroma-key color is a scene/camera property the application owns (not the
     // preset). Override the default black sentinel via $PROJECTM_VIDEO_CHROMA_KEY="r,g,b"
     // (normalized 0..1), e.g. "0,1,0" for a real green screen.
@@ -333,8 +373,17 @@ projectMSDL *setupSDLApp() {
 
     app->init(win);
 
+    // Load the first preset immediately so we render a real preset from frame one rather than
+    // sitting on the built-in idle preset until the first timed switch (or forever, if locked).
+    app->playInitialPreset();
+
 #if STEREOSCOPIC_SBS
     app->toggleFullScreen();
+#else
+    // Appliance / CLI fullscreen at startup. toggleFullScreen() flips from the default
+    // windowed state, so only call it when we actually want fullscreen.
+    if (startFullscreen)
+        app->toggleFullScreen();
 #endif
 #if FAKE_AUDIO
     app->fakeAudio  = true;
@@ -343,9 +392,16 @@ projectMSDL *setupSDLApp() {
     configureLoopback(app);
 
 #if !FAKE_AUDIO && !WASAPI_LOOPBACK
-    // get an audio input device (optionally selected by name via $PROJECTM_AUDIO_DEVICE)
-    const char* audioDevice = getenv("PROJECTM_AUDIO_DEVICE");
-    if (app->openAudioInput(audioDevice))
+    // Audio source preference order: $PROJECTM_AUDIO_DEVICE (if set) wins, then the config
+    // "Audio Devices" list, then the system default.
+    std::vector<std::string> audioPrefs;
+    if (const char* audioDevice = getenv("PROJECTM_AUDIO_DEVICE"))
+    {
+        if (audioDevice[0])
+            audioPrefs.emplace_back(audioDevice);
+    }
+    audioPrefs.insert(audioPrefs.end(), audioDevicePrefs.begin(), audioDevicePrefs.end());
+    if (app->openAudioInput(audioPrefs))
         app->beginAudioCapture();
 #endif
 

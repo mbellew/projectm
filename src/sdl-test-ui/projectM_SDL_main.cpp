@@ -33,6 +33,8 @@
 
 #include "pmSDL.hpp"
 
+#include <cstring>
+
 static int mainLoop(void *userData) {
     projectMSDL **appRef = (projectMSDL **)userData;
     auto app = *appRef;
@@ -72,7 +74,16 @@ static int mainLoop(void *userData) {
 }
 
 int main(int argc, char *argv[]) {
-    projectMSDL *app = setupSDLApp();
+    // --fullscreen/-f and --windowed/-w override the config "Fullscreen" value at startup.
+    int fullscreenOverride = -1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--fullscreen") == 0 || strcmp(argv[i], "-f") == 0)
+            fullscreenOverride = 1;
+        else if (strcmp(argv[i], "--windowed") == 0 || strcmp(argv[i], "-w") == 0)
+            fullscreenOverride = 0;
+    }
+
+    projectMSDL *app = setupSDLApp(fullscreenOverride);
     
     int status = mainLoop(&app);
 

@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 class VideoCapture
 {
@@ -14,6 +15,7 @@ public:
     enum class PixelFormat
     {
         BGRA, //!< 4 bytes per pixel, channel order B, G, R, A.
+        BGRX, //!< 4 bytes per pixel, channel order B, G, R, X; alpha byte is undefined (opaque source).
     };
 
     /**
@@ -35,12 +37,13 @@ public:
      * Requests camera access and begins capture. Blocks briefly while the user
      * responds to the system permission prompt on first use.
      * @param callback Per-frame callback invoked from a capture-backend thread.
-     * @param deviceNameSubstring Case-insensitive substring matched against device
-     *        localized names (e.g. "OBS" to pick the OBS Virtual Camera). Empty
-     *        string selects the system default video device.
+     * @param preferredNameSubstrings Preference-ordered, case-insensitive substrings
+     *        matched against device localized names (e.g. {"OBS", "FaceTime"}). The first
+     *        enumerated device matching any entry, in list order, is chosen. An empty list
+     *        (or no match) selects the system default video device.
      * @return true if capture started; false if denied or unsupported.
      */
-    bool Start(FrameCallback callback, const std::string& deviceNameSubstring = {});
+    bool Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings = {});
 
     /** Stops capture and releases the device. */
     void Stop();

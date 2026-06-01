@@ -56,10 +56,13 @@
     const size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
     void* base = CVPixelBufferGetBaseAddress(pixelBuffer);
 
+    // The camera delivers 32BGRA, but the alpha byte is undefined/meaningless for a camera
+    // source, so report it as BGRX (opaque) rather than BGRA. Otherwise video_alpha_mode=0
+    // (Source) would pick up the junk alpha and render the video fully transparent.
     const size_t expectedRow = static_cast<size_t>(width) * 4;
     if (bytesPerRow == expectedRow)
     {
-        _callback(base, width, height, VideoCapture::PixelFormat::BGRA);
+        _callback(base, width, height, VideoCapture::PixelFormat::BGRX);
     }
     else
     {
@@ -71,7 +74,7 @@
                         src + y * bytesPerRow,
                         expectedRow);
         }
-        _callback(_contiguousBuffer.data(), width, height, VideoCapture::PixelFormat::BGRA);
+        _callback(_contiguousBuffer.data(), width, height, VideoCapture::PixelFormat::BGRX);
     }
 
     CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
@@ -97,7 +100,7 @@ VideoCapture::~VideoCapture()
     Stop();
 }
 
-bool VideoCapture::Start(FrameCallback callback, const std::string& deviceNameSubstring)
+bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings)
 {
     if (m_impl->running)
     {
@@ -120,18 +123,22 @@ bool VideoCapture::Start(FrameCallback callback, const std::string& deviceNameSu
         return false;
     }
 
-    // Trim surrounding whitespace and treat a blank value as "unspecified" so that
-    // e.g. PROJECTM_VIDEO_DEVICE="" (or whitespace/newline) falls back to the default.
-    std::string trimmedName;
-    const auto firstNonSpace = deviceNameSubstring.find_first_not_of(" \t\r\n");
-    if (firstNonSpace != std::string::npos)
+    // Trim surrounding whitespace and drop blank entries so that e.g.
+    // PROJECTM_VIDEO_DEVICE="" (or whitespace/newline) doesn't shadow the config list.
+    std::vector<std::string> prefs;
+    for (const auto& raw : preferredNameSubstrings)
     {
-        const auto lastNonSpace = deviceNameSubstring.find_last_not_of(" \t\r\n");
-        trimmedName = deviceNameSubstring.substr(firstNonSpace, lastNonSpace - firstNonSpace + 1);
+        const auto firstNonSpace = raw.find_first_not_of(" \t\r\n");
+        if (firstNonSpace == std::string::npos)
+        {
+            continue;
+        }
+        const auto lastNonSpace = raw.find_last_not_of(" \t\r\n");
+        prefs.push_back(raw.substr(firstNonSpace, lastNonSpace - firstNonSpace + 1));
     }
 
     AVCaptureDevice* device = nil;
-    if (!trimmedName.empty())
+    if (!prefs.empty())
     {
         // Enumerate all video-capable devices including virtual cameras (OBS, etc.).
         // externalUnknown covers DAL plug-ins like OBS Virtual Camera; on macOS 14+
@@ -149,26 +156,35 @@ bool VideoCapture::Start(FrameCallback callback, const std::string& deviceNameSu
                                                                    mediaType:AVMediaTypeVideo
                                                                     position:AVCaptureDevicePositionUnspecified];
 
-        NSString* needle = [[NSString stringWithUTF8String:trimmedName.c_str()] lowercaseString];
         NSMutableArray<NSString*>* names = [NSMutableArray array];
         for (AVCaptureDevice* d in discovery.devices)
         {
             [names addObject:d.localizedName];
-            if (!device && [[d.localizedName lowercaseString] containsString:needle])
+        }
+
+        // Try each preference in order; the first device matching the current substring wins.
+        for (const auto& pref : prefs)
+        {
+            NSString* needle = [[NSString stringWithUTF8String:pref.c_str()] lowercaseString];
+            for (AVCaptureDevice* d in discovery.devices)
             {
-                device = d;
+                if ([[d.localizedName lowercaseString] containsString:needle])
+                {
+                    device = d;
+                    break;
+                }
+            }
+            if (device)
+            {
+                NSLog(@"[VideoCapture] Selected video device: %@ (matched \"%s\")", device.localizedName, pref.c_str());
+                break;
             }
         }
         if (!device)
         {
             // No match: warn and fall back to the system default rather than failing.
-            NSLog(@"[VideoCapture] No device matches \"%s\"; falling back to default. Available: %@",
-                  trimmedName.c_str(), names);
+            NSLog(@"[VideoCapture] No device matches preferences; falling back to default. Available: %@", names);
             device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
-        }
-        else
-        {
-            NSLog(@"[VideoCapture] Selected video device: %@", device.localizedName);
         }
     }
     else

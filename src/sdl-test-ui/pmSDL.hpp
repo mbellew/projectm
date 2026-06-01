@@ -49,6 +49,7 @@
 #include "setup.hpp"
 #ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
 #include "videoCapture.hpp"
+#include <chrono>
 #include <memory>
 #endif
 
@@ -119,6 +120,10 @@ public:
 
     void init(SDL_Window* window, const bool renderToTexture = false);
     int openAudioInput(const char* deviceName = nullptr);
+    // Try each preferred device name (case-insensitive substring) in order; the first
+    // capture device that matches and opens wins. Falls back to the system default if
+    // none match. An empty list behaves like the system-default open.
+    int openAudioInput(const std::vector<std::string>& preferredNames);
     int toggleAudioInput();
     int initAudioInput();
     void beginAudioCapture();
@@ -137,6 +142,8 @@ public:
     void touchDestroy(float x, float y);
     void touchDestroyAll();
     void renderFrame();
+    void playInitialPreset(); //!< Loads the first playlist preset at startup so the idle preset isn't shown when presets are available.
+    void trackFrameRate(std::chrono::steady_clock::time_point frameStart); //!< Accumulates and logs the achieved frame rate once per second.
     void pollEvent();
     bool keymod = false;
     std::string getActivePresetName();
@@ -145,6 +152,11 @@ public:
     projectm_handle projectM();
     void setFps(size_t fps);
     size_t fps() const;
+
+    // Preference-ordered video source list (substrings, case-insensitive), set from config
+    // before init() because capture starts there. Highest priority first. Audio is opened
+    // directly from setupSDLApp(), so its preference list is passed to openAudioInput().
+    void setVideoDevicePrefs(const std::vector<std::string>& prefs) { _videoDevicePrefs = prefs; }
 
     bool done{false};
     bool mouseDown{false};
@@ -182,7 +194,17 @@ private:
     SDL_AudioDeviceID _audioDeviceId{0};
     int _selectedAudioDevice{0};
 
+    // Preference-ordered video source list (highest priority first).
+    std::vector<std::string> _videoDevicePrefs;
+
     std::string _presetName; //!< Current preset name
+
+    // Frame-rate tracking: counts rendered frames over a ~1s wall-clock window and logs the
+    // achieved rate (vs the configured target) once per second, tagged with the current preset.
+    std::chrono::steady_clock::time_point _fpsWindowStart{}; //!< Start of the current measurement window.
+    int _fpsFrameCount{0};                                   //!< Frames rendered in the current window.
+    double _fpsFrameMsAccum{0.0};                            //!< Accumulated per-frame render time (ms) in the window.
+    bool _fpsTrackerInitialized{false};                      //!< False until the first frame seeds the window start.
 
 #ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
     std::unique_ptr<VideoCapture> _videoCapture;

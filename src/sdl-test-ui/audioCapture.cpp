@@ -1,7 +1,24 @@
 #include "audioCapture.hpp"
 #include "pmSDL.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <string>
+
+// Case-insensitive "does haystack contain needle" used for matching capture
+// device names against the user's preference list.
+static bool nameContainsCI(const char* haystack, const std::string& needle)
+{
+    if (!haystack)
+        return false;
+    std::string h(haystack);
+    std::string n(needle);
+    auto toLower = [](unsigned char c) { return static_cast<char>(std::tolower(c)); };
+    std::transform(h.begin(), h.end(), h.begin(), toLower);
+    std::transform(n.begin(), n.end(), n.begin(), toLower);
+    return h.find(n) != std::string::npos;
+}
 
 
 int projectMSDL::initAudioInput() {
@@ -99,6 +116,14 @@ int projectMSDL::toggleAudioInput() {
 }
 
 int projectMSDL::openAudioInput(const char* deviceName) {
+    // Single-name convenience wrapper around the preference-list variant.
+    std::vector<std::string> prefs;
+    if (deviceName && deviceName[0])
+        prefs.emplace_back(deviceName);
+    return openAudioInput(prefs);
+}
+
+int projectMSDL::openAudioInput(const std::vector<std::string>& preferredNames) {
     fakeAudio = false; // if we are opening an audio input then there is no need for fake audio.
     // get audio driver name (static)
 #ifdef DEBUG
@@ -115,20 +140,25 @@ int projectMSDL::openAudioInput(const char* deviceName) {
     }
 #endif
 
+    // Walk the preference list in order; the first capture device whose name contains a
+    // preferred substring (case-insensitive) wins. -1 means "system default".
     int initialDevice = -1;
-    if (deviceName && deviceName[0])
-    {
+    for (const auto& pref : preferredNames) {
+        if (pref.empty())
+            continue;
         for (unsigned int i = 0; i < _numAudioDevices; i++) {
             const char* name = SDL_GetAudioDeviceName(i, true);
-            if (name && strcmp(name, deviceName) == 0) {
+            if (nameContainsCI(name, pref)) {
                 initialDevice = static_cast<int>(i);
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Selected audio device '%s' at index %d", deviceName, initialDevice);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Selected audio device '%s' (matched '%s') at index %d", name, pref.c_str(), initialDevice);
                 break;
             }
         }
-        if (initialDevice == -1) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Requested audio device '%s' not found; falling back to default", deviceName);
-        }
+        if (initialDevice != -1)
+            break;
+    }
+    if (initialDevice == -1 && !preferredNames.empty()) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "No preferred audio device matched; falling back to default");
     }
 
     // We start with the system default capture device (index -1) unless overridden by name.
