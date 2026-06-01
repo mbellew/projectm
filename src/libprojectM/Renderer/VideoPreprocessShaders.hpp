@@ -42,13 +42,14 @@ uniform sampler2D u_input; //!< Freshly uploaded (downscaled) camera frame.
 uniform sampler2D u_prev;  //!< Previous processed frame: rgb = raw RGB, a = computed alpha.
 uniform sampler2D u_bg;    //!< Background model (rgb), for BackgroundSubtract.
 
-uniform int   u_mode;          //!< AlphaMode: 0 Source,1 Motion,2 Constant,3 MotionDecay,4 ChromaKey,5 BackgroundSubtract.
+uniform int   u_mode;          //!< AlphaMode: 0 Source,1 Constant,2 Motion,3 MotionDecay,4 ChromaKey,5 BackgroundSubtract.
 uniform float u_value;         //!< Motion/Decay scale, Constant alpha, ChromaKey tolerance, BgSubtract threshold.
 uniform float u_init;          //!< Alpha for the very first frame (no history).
 uniform float u_decay;         //!< MotionDecay persistence / BackgroundSubtract learning rate.
 uniform vec3  u_key;           //!< ChromaKey background color (normalized).
 uniform int   u_hasPrev;       //!< 0 on the first frame (no previous frame yet).
 uniform int   u_hasBackground; //!< 0 until the background model has been seeded.
+uniform int   u_mirror;        //!< Non-zero to horizontally mirror the incoming camera frame.
 
 layout(location = 0) out vec4 o_frame; //!< Processed [rawRGB, alpha].
 layout(location = 1) out vec4 o_bg;    //!< Updated background model.
@@ -70,8 +71,12 @@ float softGate(float dist, float threshold)
 
 void main()
 {
-    vec3 rgb  = texture(u_input, v_uv).rgb;
-    float srcA = texture(u_input, v_uv).a;
+    // Optionally mirror the incoming camera frame horizontally. Only the live input is flipped;
+    // the already-processed prev/background frames are stored mirrored too, so motion/background
+    // comparisons stay aligned.
+    vec2 in_uv = (u_mirror != 0) ? vec2(1.0 - v_uv.x, v_uv.y) : v_uv;
+    vec3 rgb  = texture(u_input, in_uv).rgb;
+    float srcA = texture(u_input, in_uv).a;
     vec4 prev = texture(u_prev, v_uv);
     vec3 bg   = texture(u_bg, v_uv).rgb;
 
@@ -83,13 +88,13 @@ void main()
         a = clamp(u_init, 0.0, 1.0);
         if (u_mode == 5) { bgOut = rgb; } // seed background on first frame
     }
-    else if (u_mode == 1) // Motion
-    {
-        a = clamp(chebyshev(rgb, prev.rgb) * u_value, 0.0, 1.0);
-    }
-    else if (u_mode == 2) // Constant
+    else if (u_mode == 1) // Constant
     {
         a = clamp(u_value, 0.0, 1.0);
+    }
+    else if (u_mode == 2) // Motion
+    {
+        a = clamp(chebyshev(rgb, prev.rgb) * u_value, 0.0, 1.0);
     }
     else if (u_mode == 3) // MotionDecay
     {

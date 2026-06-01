@@ -131,7 +131,7 @@ public:
     BlendableFloat blur3Max{1.0f};
     BlendableFloat blur1EdgeDarken{0.25f};
 
-    BlendableFloat videoAlphaMode{0.0f};  //!< 0=source,1=motion,2=constant,3=motion-decay,4=chroma-key,5=background-subtract. See VideoTexture::AlphaMode.
+    BlendableFloat videoAlphaMode{0.0f};  //!< 0=source,1=constant,2=motion,3=motion-decay,4=chroma-key,5=background-subtract. See VideoTexture::AlphaMode.
     BlendableFloat videoAlphaValue{1.0f}; //!< motion/decay: scale; constant: alpha; chroma-key: tolerance (0=exact); bg-subtract: threshold.
     BlendableFloat videoAlphaInit{1.0f};  //!< Alpha for the very first frame (no history yet).
     BlendableFloat videoAlphaDecay{0.9f}; //!< motion-decay: persistence (0..1); background-subtract: learning rate (set low, e.g. 0.02).

@@ -296,6 +296,11 @@ public:
     void VideoSetChromaKey(float r, float g, float b);
 
     /**
+     * @brief Enables or disables horizontal mirroring of incoming video frames. Off by default.
+     */
+    void VideoSetMirror(bool mirror);
+
+    /**
      * @brief Returns true if the video-history texture has been configured.
      */
     auto VideoIsActive() const -> bool;

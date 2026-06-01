@@ -613,6 +613,14 @@ void ProjectM::VideoSetChromaKey(float r, float g, float b)
     }
 }
 
+void ProjectM::VideoSetMirror(bool mirror)
+{
+    if (m_videoTexture)
+    {
+        m_videoTexture->SetMirror(mirror);
+    }
+}
+
 auto ProjectM::VideoIsActive() const -> bool
 {
     return m_videoTexture != nullptr;

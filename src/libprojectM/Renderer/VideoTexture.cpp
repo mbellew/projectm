@@ -110,6 +110,7 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
     m_preprocessShader->SetUniformFloat3("u_key", {m_keyR, m_keyG, m_keyB});
     m_preprocessShader->SetUniformInt("u_hasPrev", m_hasPreviousFrame ? 1 : 0);
     m_preprocessShader->SetUniformInt("u_hasBackground", m_hasBackground ? 1 : 0);
+    m_preprocessShader->SetUniformInt("u_mirror", m_mirror ? 1 : 0);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_inputTex);
@@ -234,6 +235,12 @@ void VideoTexture::ConvertAndDownscale(const uint8_t* src, int srcW, int srcH,
                             break;
                         case PixelFormat::BGRA:
                             sumR += p[2]; sumG += p[1]; sumB += p[0]; sumA += p[3];
+                            break;
+                        case PixelFormat::RGBX:
+                            sumR += p[0]; sumG += p[1]; sumB += p[2]; sumA += 255;
+                            break;
+                        case PixelFormat::BGRX:
+                            sumR += p[2]; sumG += p[1]; sumB += p[0]; sumA += 255;
                             break;
                     }
                     ++count;

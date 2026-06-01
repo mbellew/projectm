@@ -31,13 +31,15 @@ public:
         RGB = 0,  //!< 3 bytes per pixel, alpha defaults to 1.0
         RGBA = 1, //!< 4 bytes per pixel
         BGRA = 2, //!< 4 bytes per pixel, channels swapped
+        RGBX = 3, //!< 4 bytes per pixel, alpha byte ignored and forced to 1.0 (opaque source, e.g. a camera)
+        BGRX = 4, //!< 4 bytes per pixel, channels swapped, alpha byte ignored and forced to 1.0
     };
 
     enum class AlphaMode
     {
         Source = 0,             //!< Use source alpha as-is (1.0 for RGB sources, app-supplied mask for RGBA)
-        Motion = 1,             //!< Alpha = magnitude of RGB difference vs. previous frame, scaled by value
-        Constant = 2,           //!< Alpha = value
+        Constant = 1,           //!< Alpha = value
+        Motion = 2,             //!< Alpha = magnitude of RGB difference vs. previous frame, scaled by value
         MotionDecay = 3,        //!< Alpha = max(motion, previous_alpha * decay) — motion lingers and fades
         ChromaKey = 4,          //!< Alpha = foreground-ness; background = pixels near keyColor. value=tolerance (0=exact)
         BackgroundSubtract = 5, //!< Alpha = foreground vs. a temporally-averaged background. value=threshold, decay=learn rate
@@ -85,6 +87,12 @@ public:
      */
     void SetChromaKey(float r, float g, float b);
 
+    /**
+     * @brief Enables or disables horizontal mirroring of the incoming camera frames.
+     * Applied during GPU preprocessing, so it affects every alpha mode. Off by default.
+     */
+    void SetMirror(bool mirror) { m_mirror = mirror; }
+
     int Width() const { return m_texWidth; }
     int Height() const { return m_texHeight; }
     int Depth() const { return m_depth; }
@@ -121,6 +129,7 @@ private:
     float m_keyR{0.0f}; //!< ChromaKey background color (app-supplied, normalized). Default black sentinel.
     float m_keyG{0.0f};
     float m_keyB{0.0f};
+    bool m_mirror{false}; //!< Horizontally mirror incoming camera frames during preprocessing.
     int m_writeIndex{-1};
     uint32_t m_frameCount{0};
 

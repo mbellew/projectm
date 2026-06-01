@@ -513,6 +513,12 @@ void projectm_video_set_chroma_key(projectm_handle instance, float r, float g, f
     projectMInstance->VideoSetChromaKey(r, g, b);
 }
 
+void projectm_video_set_mirror(projectm_handle instance, bool mirror)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->VideoSetMirror(mirror);
+}
+
 bool projectm_video_is_active(projectm_handle instance)
 {
     auto* projectMInstance = handle_to_instance(instance);

@@ -158,6 +158,15 @@ void PerFrameContext::EvaluateInitCode(PresetState& state)
         q_values_after_init_code[q] = *q_vars[q];
         state.frameQVariables[q] = *q_vars[q];
     }
+
+    // Persist video parameters set in the per-frame init code back to the state, so they become
+    // the per-frame defaults (LoadStateVariables reseeds them from state every frame). Without
+    // this, values set in the init section would be overwritten by the defaults on the first frame.
+    state.videoAlphaMode = static_cast<float>(*video_alpha_mode);
+    state.videoAlphaValue = static_cast<float>(*video_alpha_value);
+    state.videoAlphaInit = static_cast<float>(*video_alpha_init);
+    state.videoAlphaDecay = static_cast<float>(*video_alpha_decay);
+    state.videoCleanup = static_cast<float>(*video_cleanup);
 }
 
 void PerFrameContext::LoadStateVariables(PresetState& state)

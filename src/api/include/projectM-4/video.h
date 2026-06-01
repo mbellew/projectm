@@ -34,6 +34,8 @@ typedef enum
     PROJECTM_VIDEO_FORMAT_RGB = 0,  //!< 3 bytes per pixel, alpha defaulted to opaque.
     PROJECTM_VIDEO_FORMAT_RGBA = 1, //!< 4 bytes per pixel.
     PROJECTM_VIDEO_FORMAT_BGRA = 2, //!< 4 bytes per pixel with red/blue swapped.
+    PROJECTM_VIDEO_FORMAT_RGBX = 3, //!< 4 bytes per pixel, alpha byte ignored and treated as opaque (e.g. a camera).
+    PROJECTM_VIDEO_FORMAT_BGRX = 4, //!< 4 bytes per pixel, red/blue swapped, alpha byte ignored and treated as opaque.
 } projectm_video_format;
 
 /**
@@ -90,6 +92,18 @@ PROJECTM_EXPORT void projectm_video_submit_frame(projectm_handle instance,
  */
 PROJECTM_EXPORT void projectm_video_set_chroma_key(projectm_handle instance,
                                                    float r, float g, float b);
+
+/**
+ * @brief Horizontally mirrors incoming video frames during preprocessing.
+ *
+ * Applies to every alpha mode and is off by default. If projectm_video_configure() has not been
+ * called, this is a no-op.
+ *
+ * @param instance The projectM instance handle.
+ * @param mirror True to mirror left/right, false to leave frames as-is.
+ * @since 4.2.0
+ */
+PROJECTM_EXPORT void projectm_video_set_mirror(projectm_handle instance, bool mirror);
 
 /**
  * @brief Returns true if the video-history texture has been configured.
