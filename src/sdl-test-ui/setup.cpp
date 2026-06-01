@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 
 // Split a semicolon-separated preference list (e.g. "OBS; FaceTime") into trimmed,
 // non-empty entries, preserving order. Used for the "Audio Devices"/"Video Devices" keys.
@@ -322,6 +323,32 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         videoMirror = config.read<bool>("Video Mirror", false);
         audioDevicePrefs = splitPreferenceList(config.read<std::string>("Audio Devices", std::string()));
         app->setVideoDevicePrefs(splitPreferenceList(config.read<std::string>("Video Devices", std::string())));
+
+        // Texture search path(s) for image samplers (e.g. sampler_rand00). ';'-separated,
+        // "~" expands to $HOME. Without this the library has no search path, so textured
+        // presets fail to compile their warp/comp shaders (the sampler is left undeclared).
+        std::vector<std::string> texturePaths = splitPreferenceList(config.read<std::string>("Texture Path", std::string()));
+        for (auto& path : texturePaths)
+        {
+            if (!path.empty() && path.front() == '~')
+            {
+                const char* home = std::getenv("HOME");
+                if (home != nullptr)
+                {
+                    path = std::string(home) + path.substr(1);
+                }
+            }
+        }
+        if (!texturePaths.empty())
+        {
+            std::vector<const char*> texturePathPtrs;
+            texturePathPtrs.reserve(texturePaths.size());
+            for (const auto& path : texturePaths)
+            {
+                texturePathPtrs.push_back(path.c_str());
+            }
+            projectm_set_texture_search_paths(projectMHandle, texturePathPtrs.data(), texturePathPtrs.size());
+        }
     }
 
     // CLI --fullscreen/--windowed overrides the config value (-1 = leave config value).
