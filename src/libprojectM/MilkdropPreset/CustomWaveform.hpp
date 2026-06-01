@@ -86,6 +86,7 @@ private:
     float m_g{1.0f};
     float m_b{1.0f};
     float m_a{1.0f};
+    float m_av{1.0f}; //!< /*FLOATBUF*/ Per-pixel alpha-channel state value written at drawn pixels (wavecode_N_av).
     bool m_spectrum{false}; //!< Spectrum data or PCM data.
     bool m_useDots{false}; //!< If non-zero, draw wave as dots instead of lines.
     bool m_drawThick{false}; //!< Draw thicker lines.

@@ -35,15 +35,20 @@ uniform sampler2D texture_sampler;
 out vec4 color;
 
 void main(){
-    color = texture(texture_sampler, fragment_tex_coord);
+    /*FLOATBUF*/ // Clamp RGB to displayable [0,1] (the float pattern can exceed it); the alpha
+    /*FLOATBUF*/ // channel is preserved so it can carry per-pixel state through the flip.
+    vec4 c = texture(texture_sampler, fragment_tex_coord);
+    color = vec4(clamp(c.rgb, 0.0, 1.0), c.a);
 }
 
 )";
 
-CopyTexture::CopyTexture()
+CopyTexture::CopyTexture(GLint colorInternalFormat, GLenum colorFormat, GLenum colorType)
     : m_mesh(VertexBufferUsage::StaticDraw, false, true)
 {
-    m_framebuffer.CreateColorAttachment(0, 0);
+    /*FLOATBUF*/ // Color format is parameterized (default RGBA8) so the pattern flip can request
+    /*FLOATBUF*/ // RGBA32F to carry per-pixel alpha state, while other users (Border) stay RGBA8.
+    m_framebuffer.CreateColorAttachment(0, 0, colorInternalFormat, colorFormat, colorType);
 
     m_mesh.SetRenderPrimitiveType(Mesh::PrimitiveType::TriangleStrip);
 

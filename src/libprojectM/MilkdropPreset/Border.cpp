@@ -33,10 +33,21 @@ void Border::Draw(const PerFrameContext& presetPerFrameContext)
     float const outerBorderSize = static_cast<float>(*presetPerFrameContext.ob_size);
     float const innerBorderSize = static_cast<float>(*presetPerFrameContext.ib_size);
 
-    // No additive drawing for borders
-    Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::OneMinusSourceAlpha);
-
-    auto shader = m_presetState.untexturedShader.lock();
+    /*FLOATBUF*/
+    // Prefer the dual-source shader so each border writes its per-pixel alpha state (ob_av/ib_av)
+    // into the pattern buffer's alpha channel while RGB blends by ob_a/ib_a. Falls back to plain.
+    auto shader = m_presetState.untexturedDualSourceShader.lock();
+    const bool dualSource = shader != nullptr;
+    if (dualSource)
+    {
+        Renderer::BlendMode::SetDualSourceAlphaState(false); // borders never additive
+    }
+    else
+    {
+        shader = m_presetState.untexturedShader.lock();
+        // No additive drawing for borders
+        Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::OneMinusSourceAlpha);
+    }
     shader->Bind();
     shader->SetUniformMat4x4("vertex_transformation", PresetState::orthogonalProjection);
     shader->SetUniformFloat("vertex_point_size", 1.0f);
@@ -53,6 +64,13 @@ void Border::Draw(const PerFrameContext& presetPerFrameContext)
         if (a > 0.001f)
         {
             glVertexAttrib4f(1, r, g, b, a);
+            /*FLOATBUF*/ // Constant per-pixel A-channel state for this border (loc3).
+            if (dualSource)
+            {
+                float const av = (border == 0) ? static_cast<float>(*presetPerFrameContext.ob_av)
+                                               : static_cast<float>(*presetPerFrameContext.ib_av);
+                glVertexAttrib1f(3, av);
+            }
 
             float innerRadius = (border == 0) ? 1.0f - outerBorderSize : 1.0f - outerBorderSize - innerBorderSize;
             float outerRadius = (border == 0) ? 1.0f : 1.0f - outerBorderSize;

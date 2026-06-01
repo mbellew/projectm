@@ -39,20 +39,33 @@ void Waveform::Draw(const PerFrameContext& presetPerFrameContext)
 #endif
     glLineWidth(1);
 
-    auto shader = m_presetState.untexturedShader.lock();
-    shader->Bind();
-    shader->SetUniformMat4x4("vertex_transformation", PresetState::orthogonalProjectionFlipped);
-    shader->SetUniformFloat("vertex_point_size", 1.0f);
-
-    // Additive wave drawing (vice overwrite)
-    if (m_presetState.additiveWaves)
+    /*FLOATBUF*/
+    // Prefer the dual-source shader so the per-pixel alpha state (wave_av) is written into the
+    // pattern buffer's alpha channel while RGB blends by wave_a. Falls back to the plain shader.
+    auto shader = m_presetState.untexturedDualSourceShader.lock();
+    const bool dualSource = shader != nullptr;
+    if (dualSource)
     {
-        Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::One);
+        Renderer::BlendMode::SetDualSourceAlphaState(m_presetState.additiveWaves);
+        // Constant per-pixel state value for all waveform vertices (loc3).
+        glVertexAttrib1f(3, static_cast<float>(*presetPerFrameContext.wave_av));
     }
     else
     {
-        Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::OneMinusSourceAlpha);
+        shader = m_presetState.untexturedShader.lock();
+        // Additive wave drawing (vice overwrite)
+        if (m_presetState.additiveWaves)
+        {
+            Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::One);
+        }
+        else
+        {
+            Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::OneMinusSourceAlpha);
+        }
     }
+    shader->Bind();
+    shader->SetUniformMat4x4("vertex_transformation", PresetState::orthogonalProjectionFlipped);
+    shader->SetUniformFloat("vertex_point_size", 1.0f);
 
     auto smoothedVertices = m_waveformMath->GetVertices(m_presetState, presetPerFrameContext);
 

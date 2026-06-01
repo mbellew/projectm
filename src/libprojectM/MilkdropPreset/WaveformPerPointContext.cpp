@@ -66,6 +66,7 @@ void WaveformPerPointContext::RegisterBuiltinVariables()
     REG_VAR(g);
     REG_VAR(b);
     REG_VAR(a);
+    REG_VAR(av); /*FLOATBUF*/
 }
 
 void WaveformPerPointContext::LoadReadOnlyStateVariables(const PerFrameContext& presetPerFrameContext)

@@ -62,6 +62,15 @@ public:
      */
     static void SetBlendFunction(Function srcFunc, Function dstFunc);
 
+    /*FLOATBUF*/
+    /**
+     * @brief Enables dual-source blending for drawing into a float pattern buffer whose alpha holds
+     * per-pixel state. RGB blends by the second source's alpha (the draw alpha), while the A channel
+     * is overwritten with the fragment's per-pixel state value (output 0's alpha).
+     * @param additive If true, RGB uses additive blending (Src1Alpha, One) like additive waveforms.
+     */
+    static void SetDualSourceAlphaState(bool additive);
+
 private:
     /**
      * Translates the Function enum values into OpenGL constants.

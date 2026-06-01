@@ -416,6 +416,14 @@ void PS(float4 _vDiffuse : COLOR,
         if (m_type == ShaderType::WarpShader)
         {
             progMain.append("_mv_tex_coords.xy = _uv.xy;\n");
+            /*FLOATBUF*/ // Expose the alpha channel as a writable per-pixel state ("ret_a"). Default
+            /*FLOATBUF*/ // to the warped feedback alpha so untouched presets carry state with the pixels.
+            progMain.append("float ret_a = tex2D(sampler_main, _uv.xy).a;\n");
+        }
+        else
+        {
+            /*FLOATBUF*/ // Comp output is display-only (not fed back): default opaque, override via ret_a.
+            progMain.append("float ret_a = 1.0;\n");
         }
         program.replace(int(found), 1, progMain);
     }
@@ -429,7 +437,7 @@ void PS(float4 _vDiffuse : COLOR,
     found = program.rfind('}');
     if (found != std::string::npos)
     {
-        program.replace(int(found), 1, "_return_value = float4(ret.xyz, 1.0);\n"
+        program.replace(int(found), 1, "_return_value = float4(ret.xyz, ret_a);\n" /*FLOATBUF*/
                                        "}\n");
     }
     else

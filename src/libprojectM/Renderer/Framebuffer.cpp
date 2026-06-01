@@ -49,6 +49,23 @@ void Framebuffer::Bind(int framebufferIndex)
     m_readFramebuffer = m_drawFramebuffer = framebufferIndex;
 }
 
+/*FLOATBUF*/
+void Framebuffer::ClearColorChannels(int framebufferIndex, bool r, bool g, bool b, bool a, float value)
+{
+    if (framebufferIndex < 0 || framebufferIndex >= static_cast<int>(m_framebufferIds.size()))
+    {
+        return;
+    }
+
+    Bind(framebufferIndex);
+    glColorMask(r ? GL_TRUE : GL_FALSE, g ? GL_TRUE : GL_FALSE,
+                b ? GL_TRUE : GL_FALSE, a ? GL_TRUE : GL_FALSE);
+    glClearColor(value, value, value, value);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void Framebuffer::BindRead(int framebufferIndex)
 {
     if (framebufferIndex < 0 || framebufferIndex >= static_cast<int>(m_framebufferIds.size()))

@@ -11,6 +11,8 @@ set(SHADER_FILES
         Shaders/TexturedDrawVertexShaderGlsl330.vert
         Shaders/UntexturedDrawFragmentShaderGlsl330.frag
         Shaders/UntexturedDrawVertexShaderGlsl330.vert
+        Shaders/UntexturedDrawDualSourceFragmentShaderGlsl330.frag
+        Shaders/UntexturedDrawDualSourceVertexShaderGlsl330.vert
         )
 
 string(REPLACE ";" "\\;" SHADER_FILES_ARG "${SHADER_FILES}")

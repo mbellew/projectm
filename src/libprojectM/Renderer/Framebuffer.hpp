@@ -214,6 +214,16 @@ public:
      */
     void MaskDrawBuffer(int bufferIndex, bool masked);
 
+    /*FLOATBUF*/
+    /**
+     * @brief Clears selected color channels of a framebuffer's first color attachment to a value.
+     * Used to (re)initialize the per-pixel state stored in the alpha channel at preset load.
+     * @param framebufferIndex The framebuffer to clear.
+     * @param r,g,b,a Whether to clear each channel.
+     * @param value The clear value written to the enabled channels.
+     */
+    void ClearColorChannels(int framebufferIndex, bool r, bool g, bool b, bool a, float value);
+
 private:
     /**
      * @brief Updates the draw buffer list for the fragment shader outputs of the given framebuffer.

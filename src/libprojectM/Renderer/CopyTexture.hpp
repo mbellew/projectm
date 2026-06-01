@@ -16,7 +16,9 @@ namespace Renderer {
 class CopyTexture
 {
 public:
-    CopyTexture();
+    /*FLOATBUF*/ // Default RGBA8; pass a float format (e.g. GL_RGBA32F/GL_RGBA/GL_FLOAT) to carry
+    /*FLOATBUF*/ // per-pixel alpha state through the copy/flip.
+    explicit CopyTexture(GLint colorInternalFormat = GL_RGBA, GLenum colorFormat = GL_RGBA, GLenum colorType = GL_UNSIGNED_BYTE);
 
     /**
      * @brief Copies the original texture into the currently bound framebuffer.

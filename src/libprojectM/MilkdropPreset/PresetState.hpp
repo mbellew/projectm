@@ -63,7 +63,10 @@ public:
     int waveMode{0};
     int oldWaveMode{-1};
     bool additiveWaves{false};
+    bool waveEnabled{true};            //!< fWaveEnable: when false, the built-in waveform is not drawn at all (skips RGB *and* alpha writes). Unlike fWaveAlpha=0, which only zeroes visible RGB but still stamps the alpha channel.
+    bool shapesEnabled{true};          //!< fShapeEnable: when false, custom shapes are not drawn at all (skips RGB *and* alpha writes).
     BlendableFloat waveAlpha{0.8f};
+    BlendableFloat waveAlphaState{1.0f}; //!< /*FLOATBUF*/ Base-waveform per-pixel A-channel state value (wave_av).
     BlendableFloat waveScale{1.0f};
     BlendableFloat waveSmoothing{0.75f};
     bool waveDots{false};
@@ -104,11 +107,13 @@ public:
     BlendableFloat outerBorderG{0.0f};
     BlendableFloat outerBorderB{0.0f};
     BlendableFloat outerBorderA{0.0f};
+    BlendableFloat outerBorderAlphaState{1.0f}; //!< /*FLOATBUF*/ Outer-border per-pixel A-channel state value (ob_av).
     BlendableFloat innerBorderSize{0.01f};
     BlendableFloat innerBorderR{0.25f};
     BlendableFloat innerBorderG{0.25f};
     BlendableFloat innerBorderB{0.25f};
     BlendableFloat innerBorderA{0.0f};
+    BlendableFloat innerBorderAlphaState{1.0f}; //!< /*FLOATBUF*/ Inner-border per-pixel A-channel state value (ib_av).
     BlendableFloat mvX{12.0f};
     BlendableFloat mvY{9.0f};
     BlendableFloat mvDX{0.0f};
@@ -131,6 +136,9 @@ public:
     BlendableFloat videoAlphaInit{1.0f};  //!< Alpha for the very first frame (no history yet).
     BlendableFloat videoAlphaDecay{0.9f}; //!< motion-decay: persistence (0..1); background-subtract: learning rate (set low, e.g. 0.02).
     BlendableFloat videoCleanup{0.0f};    //!< Morphological mask-cleanup iterations (0=off, 1-4 = open+close passes).
+
+    /*FLOATBUF*/ float alphaInit{1.0f};     //!< Pattern A-channel (per-pixel state) value cleared to at preset load.
+    /*FLOATBUF*/ bool alphaCarryover{false}; //!< If true, don't clear the A channel on load (inherit prior state).
 
     int presetVersion{100};        //!< Value of MILKDROP_PRESET_VERSION in preset files.
     int warpShaderVersion{2};      //!< PSVERSION or PSVERSION_WARP.
@@ -160,6 +168,7 @@ public:
     std::string compositeShader; //!< Composite shader code.
 
     std::weak_ptr<Renderer::Shader> untexturedShader; //!< Shader used to draw untextured primitives, e.g. waveforms.
+    /*FLOATBUF*/ std::weak_ptr<Renderer::Shader> untexturedDualSourceShader; //!< Dual-source variant that writes per-pixel state (av) into the pattern alpha; null if unsupported.
     std::weak_ptr<Renderer::Shader> texturedShader;   //!< Shader used to draw textured primitives, e.g. textured shapes and the warp mesh.
 
     std::weak_ptr<Renderer::Texture> mainTexture; //!< A weak reference to the main texture in the preset framebuffer.

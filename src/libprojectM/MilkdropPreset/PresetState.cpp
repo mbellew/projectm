@@ -38,6 +38,8 @@ void PresetState::Initialize(PresetFileParser& parsedFile)
 
     // General:
     decay = parsedFile.GetFloat("fDecay", decay);
+    /*FLOATBUF*/ alphaInit = parsedFile.GetFloat("fAlphaInit", alphaInit);            // initial pattern A-channel (per-pixel state) value
+    /*FLOATBUF*/ alphaCarryover = parsedFile.GetBool("bAlphaCarryover", alphaCarryover); // inherit prior A state instead of clearing
     gammaAdj = parsedFile.GetFloat("fGammaAdj", gammaAdj);
     videoEchoZoom = parsedFile.GetFloat("fVideoEchoZoom", videoEchoZoom);
     videoEchoAlpha = parsedFile.GetFloat("fVideoEchoAlpha", videoEchoAlpha);
@@ -63,7 +65,10 @@ void PresetState::Initialize(PresetFileParser& parsedFile)
     waveThick = parsedFile.GetBool("bWaveThick", waveThick);
     modWaveAlphaByvolume = parsedFile.GetBool("bModWaveAlphaByVolume", modWaveAlphaByvolume);
     maximizeWaveColor = parsedFile.GetBool("bMaximizeWaveColor", maximizeWaveColor);
+    waveEnabled = parsedFile.GetBool("fWaveEnable", waveEnabled);
+    shapesEnabled = parsedFile.GetBool("fShapeEnable", shapesEnabled);
     waveAlpha = parsedFile.GetFloat("fWaveAlpha", waveAlpha);
+    waveAlphaState = parsedFile.GetFloat("wave_av", waveAlphaState); /*FLOATBUF*/
     waveScale = parsedFile.GetFloat("fWaveScale", waveScale);
     waveSmoothing = parsedFile.GetFloat("fWaveSmoothing", waveSmoothing);
     waveParam = parsedFile.GetFloat("fWaveParam", waveParam);
@@ -107,11 +112,13 @@ void PresetState::Initialize(PresetFileParser& parsedFile)
     outerBorderG = parsedFile.GetFloat("ob_g", outerBorderG);
     outerBorderB = parsedFile.GetFloat("ob_b", outerBorderB);
     outerBorderA = parsedFile.GetFloat("ob_a", outerBorderA);
+    outerBorderAlphaState = parsedFile.GetFloat("ob_av", outerBorderAlphaState); /*FLOATBUF*/
     innerBorderSize = parsedFile.GetFloat("ib_size", innerBorderSize);
     innerBorderR = parsedFile.GetFloat("ib_r", innerBorderR);
     innerBorderG = parsedFile.GetFloat("ib_g", innerBorderG);
     innerBorderB = parsedFile.GetFloat("ib_b", innerBorderB);
     innerBorderA = parsedFile.GetFloat("ib_a", innerBorderA);
+    innerBorderAlphaState = parsedFile.GetFloat("ib_av", innerBorderAlphaState); /*FLOATBUF*/
 
     // Versions:
     presetVersion = parsedFile.GetInt("MILKDROP_PRESET_VERSION", presetVersion);
@@ -173,6 +180,22 @@ void PresetState::LoadShaders()
         renderContext.shaderCache->Insert("milkdrop_generic_untextured", untexturedShaderShared);
     }
     untexturedShader = untexturedShaderShared;
+
+    /*FLOATBUF*/
+    // Dual-source variant: draws write per-pixel state (x) into the pattern buffer's alpha channel.
+    // Not available on core GLES (no dual-source blending); there it stays null and drawables fall
+    // back to the plain untextured shader (A channel = draw alpha, as before).
+#ifndef USE_GLES
+    auto untexturedDualSourceShaderShared = renderContext.shaderCache->Get("milkdrop_generic_untextured_dualsource");
+    if (!untexturedDualSourceShaderShared)
+    {
+        untexturedDualSourceShaderShared = std::make_shared<Renderer::Shader>();
+        untexturedDualSourceShaderShared->CompileProgram(staticShaders->GetUntexturedDrawDualSourceVertexShader(),
+                                                         staticShaders->GetUntexturedDrawDualSourceFragmentShader());
+        renderContext.shaderCache->Insert("milkdrop_generic_untextured_dualsource", untexturedDualSourceShaderShared);
+    }
+    untexturedDualSourceShader = untexturedDualSourceShaderShared;
+#endif
 
     auto texturedShaderShared = renderContext.shaderCache->Get("milkdrop_generic_textured");
     if (!texturedShaderShared)

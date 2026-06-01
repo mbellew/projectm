@@ -29,6 +29,15 @@ public:
         , m_b(b)
         , m_a(a) {};
 
+    /*FLOATBUF*/ // Five-component variant: x is the per-pixel state value written to the pattern
+    /*FLOATBUF*/ // buffer's alpha channel by dual-source-blended drawables (default 1.0 otherwise).
+    Color(float r, float g, float b, float a, float x)
+        : m_r(r)
+        , m_g(g)
+        , m_b(b)
+        , m_a(a)
+        , m_x(x) {};
+
     /**
      * Returns the color's r value.
      * @return The color's r value.
@@ -101,6 +110,18 @@ public:
         m_a = a;
     }
 
+    /*FLOATBUF*/ // Per-pixel alpha-channel state value (see 5-arg constructor). Defaults to 1.0.
+    auto X() const -> float
+    {
+        return m_x;
+    }
+
+    /*FLOATBUF*/
+    void SetX(float x)
+    {
+        m_x = x;
+    }
+
     /**
      * @brief Computes the modulus to wrap float values into the range of [0.0, 1.0].
      *
@@ -168,7 +189,24 @@ public:
      */
     static void InitializeAttributePointer(uint32_t attributeIndex)
     {
-        glVertexAttribPointer(attributeIndex, sizeof(Color) / sizeof(float), GL_FLOAT, GL_FALSE, sizeof(Color), nullptr);
+        /*FLOATBUF*/ // RGBA is the first 4 floats; report 4 components (a single attribute is max 4)
+        /*FLOATBUF*/ // even though the struct now also carries x. Stride is sizeof(Color) so the
+        /*FLOATBUF*/ // trailing x is skipped for shaders that only read color.
+        glVertexAttribPointer(attributeIndex, 4, GL_FLOAT, GL_FALSE, sizeof(Color), nullptr);
+    }
+
+    /*FLOATBUF*/
+    /**
+     * @brief Sets up two attribute pointers for dual-source drawing: rgba (vec4) and x (float).
+     * Both index into this interleaved buffer; x sits right after the 4 color floats.
+     * @param colorIndex Attribute location for the vec4 rgba color.
+     * @param alphaStateIndex Attribute location for the float x (per-pixel A-channel state).
+     */
+    static void InitializeDualSourceAttributePointers(uint32_t colorIndex, uint32_t alphaStateIndex)
+    {
+        glVertexAttribPointer(colorIndex, 4, GL_FLOAT, GL_FALSE, sizeof(Color), nullptr);
+        glVertexAttribPointer(alphaStateIndex, 1, GL_FLOAT, GL_FALSE, sizeof(Color),
+                              reinterpret_cast<const void*>(sizeof(float) * 4));
     }
 
 private:
@@ -176,6 +214,7 @@ private:
     float m_g{}; //!< The color's g value.
     float m_b{}; //!< The color's b value.
     float m_a{}; //!< The color's a value.
+    float m_x{1.0f}; //!< /*FLOATBUF*/ Per-pixel state written to the pattern alpha channel (default 1.0).
 };
 
 } // namespace Renderer

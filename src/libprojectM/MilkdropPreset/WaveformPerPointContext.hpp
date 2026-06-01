@@ -69,6 +69,7 @@ public:
     PRJM_EVAL_F* g{};
     PRJM_EVAL_F* b{};
     PRJM_EVAL_F* a{};
+    PRJM_EVAL_F* av{}; //!< /*FLOATBUF*/ Per-point alpha-channel state written into the float pattern buffer (default 1.0).
 };
 
 } // namespace MilkdropPreset

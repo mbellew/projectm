@@ -74,6 +74,16 @@ void MilkdropPreset::Initialize(const Renderer::RenderContext& renderContext)
 
     m_perPixelMesh.CompileWarpShader(m_state);
     m_finalComposite.CompileCompositeShader(m_state);
+
+    /*FLOATBUF*/
+    // Initialize the per-pixel state stored in the pattern buffer's alpha channel. Unless the
+    // preset opts into carryover (inherit whatever state is already there), clear only the A
+    // channel of both pattern surfaces to fAlphaInit (default 1.0), leaving RGB untouched.
+    if (!m_state.alphaCarryover)
+    {
+        m_framebuffer.ClearColorChannels(m_currentFrameBuffer, false, false, false, true, m_state.alphaInit);
+        m_framebuffer.ClearColorChannels(m_previousFrameBuffer, false, false, false, true, m_state.alphaInit);
+    }
 }
 
 void MilkdropPreset::RenderFrame(const libprojectM::Audio::FrameAudioData& audioData, const Renderer::RenderContext& renderContext)
@@ -127,15 +137,21 @@ void MilkdropPreset::RenderFrame(const libprojectM::Audio::FrameAudioData& audio
     }
 
     // Draw audio-data-related stuff
-    for (auto& shape : m_customShapes)
+    if (m_state.shapesEnabled)
     {
-        shape->Draw();
+        for (auto& shape : m_customShapes)
+        {
+            shape->Draw();
+        }
     }
     for (auto& wave : m_customWaveforms)
     {
         wave->Draw(m_perFrameContext);
     }
-    m_waveform.Draw(m_perFrameContext);
+    if (m_state.waveEnabled)
+    {
+        m_waveform.Draw(m_perFrameContext);
+    }
 
     // Done in DrawSprites() in Milkdrop
     if (*m_perFrameContext.darken_center > 0)
@@ -261,8 +277,10 @@ void MilkdropPreset::InitializePreset(PresetFileParser& parsedFile)
 {
     // Create the offscreen rendering surfaces.
     m_motionVectorUVMap = std::make_shared<Renderer::TextureAttachment>(GL_RG16F, GL_RG, GL_FLOAT, 0, 0);
-    m_framebuffer.CreateColorAttachment(0, 0); // Main image 1
-    m_framebuffer.CreateColorAttachment(1, 0); // Main image 2
+    // FLOATBUF: float main pattern buffer so the alpha channel can hold per-pixel state that
+    // follows the pixels through the warp feedback. Switch to GL_RGBA16F to halve memory.
+    m_framebuffer.CreateColorAttachment(0, 0, GL_RGBA16F, GL_RGBA, GL_FLOAT); /*FLOATBUF*/ // Main image 1
+    m_framebuffer.CreateColorAttachment(1, 0, GL_RGBA16F, GL_RGBA, GL_FLOAT); /*FLOATBUF*/ // Main image 2
 
     Renderer::Framebuffer::Unbind();
 

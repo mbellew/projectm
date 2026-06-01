@@ -164,3 +164,6 @@ uniform float4x3 rot_rand4;
 // age: 0.0 = most recent frame, 1.0 = oldest available frame.
 // Returns float4 (rgba) — alpha is preset-controlled via video_alpha_mode/value/init.
 #define GetVideo(uv, age) tex3D(sampler_fw_video, float3(uv, frac(video_z_write - (age) * video_z_range + 1.0)))
+/*FLOATBUF*/ // Per-pixel state stored in the main buffer's alpha channel. Read with GetState(uv);
+/*FLOATBUF*/ // write by assigning to the "ret_a" variable in a warp or comp shader_body.
+#define GetState(uv) (tex2D(sampler_main, uv).a)

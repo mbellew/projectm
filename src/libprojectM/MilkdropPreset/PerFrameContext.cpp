@@ -53,6 +53,7 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(frame);
     REG_VAR(decay);
     REG_VAR(wave_a);
+    REG_VAR(wave_av); /*FLOATBUF*/
     REG_VAR(wave_r);
     REG_VAR(wave_g);
     REG_VAR(wave_b);
@@ -71,11 +72,13 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(ob_g);
     REG_VAR(ob_b);
     REG_VAR(ob_a);
+    REG_VAR(ob_av); /*FLOATBUF*/
     REG_VAR(ib_size);
     REG_VAR(ib_r);
     REG_VAR(ib_g);
     REG_VAR(ib_b);
     REG_VAR(ib_a);
+    REG_VAR(ib_av); /*FLOATBUF*/
     REG_VAR(mv_x);
     REG_VAR(mv_y);
     REG_VAR(mv_dx);
@@ -185,6 +188,7 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *progress = static_cast<PRJM_EVAL_F>(state.renderContext.progress);
     *decay = static_cast<PRJM_EVAL_F>(state.decay);
     *wave_a = static_cast<PRJM_EVAL_F>(state.waveAlpha);
+    *wave_av = static_cast<PRJM_EVAL_F>(state.waveAlphaState); /*FLOATBUF*/
     *wave_r = static_cast<PRJM_EVAL_F>(state.waveR);
     *wave_g = static_cast<PRJM_EVAL_F>(state.waveG);
     *wave_b = static_cast<PRJM_EVAL_F>(state.waveB);
@@ -197,11 +201,13 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *ob_g = static_cast<PRJM_EVAL_F>(state.outerBorderG);
     *ob_b = static_cast<PRJM_EVAL_F>(state.outerBorderB);
     *ob_a = static_cast<PRJM_EVAL_F>(state.outerBorderA);
+    *ob_av = static_cast<PRJM_EVAL_F>(state.outerBorderAlphaState); /*FLOATBUF*/
     *ib_size = static_cast<PRJM_EVAL_F>(state.innerBorderSize);
     *ib_r = static_cast<PRJM_EVAL_F>(state.innerBorderR);
     *ib_g = static_cast<PRJM_EVAL_F>(state.innerBorderG);
     *ib_b = static_cast<PRJM_EVAL_F>(state.innerBorderB);
     *ib_a = static_cast<PRJM_EVAL_F>(state.innerBorderA);
+    *ib_av = static_cast<PRJM_EVAL_F>(state.innerBorderAlphaState); /*FLOATBUF*/
     *mv_x = static_cast<PRJM_EVAL_F>(state.mvX);
     *mv_y = static_cast<PRJM_EVAL_F>(state.mvY);
     *mv_dx = static_cast<PRJM_EVAL_F>(state.mvDX);

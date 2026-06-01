@@ -85,6 +85,7 @@ public:
     PRJM_EVAL_F* mid_att{};
     PRJM_EVAL_F* treb_att{};
     PRJM_EVAL_F* wave_a{};
+    PRJM_EVAL_F* wave_av{}; //!< /*FLOATBUF*/ Base-waveform per-pixel alpha-channel state value (wave_av, default 1.0).
     PRJM_EVAL_F* wave_r{};
     PRJM_EVAL_F* wave_g{};
     PRJM_EVAL_F* wave_b{};
@@ -101,11 +102,13 @@ public:
     PRJM_EVAL_F* ob_g{};
     PRJM_EVAL_F* ob_b{};
     PRJM_EVAL_F* ob_a{};
+    PRJM_EVAL_F* ob_av{}; //!< /*FLOATBUF*/ Outer-border per-pixel A-channel state (ob_av).
     PRJM_EVAL_F* ib_size{};
     PRJM_EVAL_F* ib_r{};
     PRJM_EVAL_F* ib_g{};
     PRJM_EVAL_F* ib_b{};
     PRJM_EVAL_F* ib_a{};
+    PRJM_EVAL_F* ib_av{}; //!< /*FLOATBUF*/ Inner-border per-pixel A-channel state (ib_av).
     PRJM_EVAL_F* mv_x{};
     PRJM_EVAL_F* mv_y{};
     PRJM_EVAL_F* mv_dx{};

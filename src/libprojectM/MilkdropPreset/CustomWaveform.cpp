@@ -46,6 +46,7 @@ void CustomWaveform::Initialize(PresetFileParser& parsedFile, int index)
     m_g = parsedFile.GetFloat(wavecodePrefix + "g", m_g);
     m_b = parsedFile.GetFloat(wavecodePrefix + "b", m_b);
     m_a = parsedFile.GetFloat(wavecodePrefix + "a", m_a);
+    m_av = parsedFile.GetFloat(wavecodePrefix + "av", m_av); /*FLOATBUF*/
 
     m_mesh.SetRenderPrimitiveType(m_useDots ? Renderer::Mesh::PrimitiveType::Points : Renderer::Mesh::PrimitiveType::LineStrip);
 }
@@ -155,6 +156,9 @@ void CustomWaveform::Draw(const PerFrameContext& presetPerFrameContext)
                                                                  static_cast<float>(*m_perPointContext.g),
                                                                  static_cast<float>(*m_perPointContext.b),
                                                                  static_cast<float>(*m_perPointContext.a)));
+        /*FLOATBUF*/ // Carry the per-point alpha-channel state (av) through as the Color's x; Modulo
+        /*FLOATBUF*/ // only wraps rgba, so set x afterwards (not wrapped - it's arbitrary state).
+        colors[sample].SetX(static_cast<float>(*m_perPointContext.av));
     }
 
     SmoothWave(points, colors);
@@ -164,20 +168,44 @@ void CustomWaveform::Draw(const PerFrameContext& presetPerFrameContext)
 #endif
     glLineWidth(1);
 
-    // Additive wave drawing (vice overwrite)
-    if (m_additive)
+    /*FLOATBUF*/
+    // Prefer the dual-source shader so the per-point alpha state (av) is written into the pattern
+    // buffer's alpha channel while RGB blends by the draw alpha. Falls back to the plain shader
+    // (alpha = draw alpha, original behaviour) when dual-source isn't available (e.g. GLES).
+    auto shader = m_presetState.untexturedDualSourceShader.lock();
+    const bool dualSource = shader != nullptr;
+    if (dualSource)
     {
-        Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::One);
+        Renderer::BlendMode::SetDualSourceAlphaState(m_additive);
     }
     else
     {
-        Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::OneMinusSourceAlpha);
+        shader = m_presetState.untexturedShader.lock();
+        // Additive wave drawing (vice overwrite)
+        if (m_additive)
+        {
+            Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::One);
+        }
+        else
+        {
+            Renderer::BlendMode::Set(true, Renderer::BlendMode::Function::SourceAlpha, Renderer::BlendMode::Function::OneMinusSourceAlpha);
+        }
     }
 
-    auto shader = m_presetState.untexturedShader.lock();
     shader->Bind();
     shader->SetUniformMat4x4("vertex_transformation", PresetState::orthogonalProjection);
     shader->SetUniformFloat("vertex_point_size", m_drawThick ? 2.0f : 1.0f);
+
+    /*FLOATBUF*/
+    // Enable the loc3 "alpha state" vertex attribute (the 5th float of Color) for the dual-source
+    // shader. Set up on the mesh VAO; persists across the Update()/Draw() calls below.
+    if (dualSource)
+    {
+        m_mesh.Bind();
+        m_mesh.Colors().Bind();
+        Renderer::Color::InitializeDualSourceAttributePointers(1, 3);
+        Renderer::VertexBuffer<Renderer::Color>::SetEnableAttributeArray(3, true);
+    }
 
     auto iterations = (m_drawThick && !m_useDots) ? 4 : 1;
 
@@ -259,6 +287,7 @@ void CustomWaveform::LoadPerPointEvaluationVariables(float sample, float value1,
     *m_perPointContext.g = *m_perFrameContext.g;
     *m_perPointContext.b = *m_perFrameContext.b;
     *m_perPointContext.a = *m_perFrameContext.a;
+    *m_perPointContext.av = static_cast<double>(m_av); /*FLOATBUF*/ // per-pixel A-channel state, default; per-point code may override
 }
 
 void CustomWaveform::SmoothWave(const std::vector<Renderer::Point>& points, const std::vector<Renderer::Color>& colors)
