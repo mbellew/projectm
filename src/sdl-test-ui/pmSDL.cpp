@@ -30,6 +30,7 @@
 
 #include "pmSDL.hpp"
 
+#include <fstream>
 #include <vector>
 
 namespace {
@@ -242,6 +243,7 @@ void projectMSDL::keyHandler(SDL_Event* sdl_evt)
                 this->stretch = false; // if we are toggling fullscreen, ensure we disable monitor stretching.
                 return;                // handled
             }
+            addCurrentPresetToFavorites();
             break;
 
         case SDLK_r:
@@ -476,6 +478,37 @@ std::string projectMSDL::getActivePresetName()
         return presetNameString;
     }
     return {};
+}
+
+void projectMSDL::addCurrentPresetToFavorites()
+{
+    const std::string preset = getActivePresetName();
+    if (preset.empty())
+    {
+        return;
+    }
+
+    const char* path = "favorites.txt";
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line == preset)
+        {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Already in favorites: %s\n", preset.c_str());
+            return;
+        }
+    }
+    in.close();
+
+    std::ofstream out(path, std::ios::app);
+    if (!out)
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Failed to open %s for append\n", path);
+        return;
+    }
+    out << preset << '\n';
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Added to favorites: %s\n", preset.c_str());
 }
 
 void projectMSDL::presetSwitchedEvent(bool isHardCut, unsigned int index, void* context)
