@@ -31,6 +31,7 @@
 #include "pmSDL.hpp"
 
 #include <cstdlib>
+#include <fstream>
 #include <string>
 #include <vector>
 
