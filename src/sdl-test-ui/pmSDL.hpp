@@ -153,10 +153,18 @@ public:
     void setFps(size_t fps);
     size_t fps() const;
 
+    // Sets whether the playlist plays in shuffled (random) or sequential order.
+    // Set from config ("Shuffle") in setupSDLApp(); the 'y' key still toggles it at runtime.
+    void setShuffle(bool shuffle);
+
     // Preference-ordered video source list (substrings, case-insensitive), set from config
     // before init() because capture starts there. Highest priority first. Audio is opened
     // directly from setupSDLApp(), so its preference list is passed to openAudioInput().
     void setVideoDevicePrefs(const std::vector<std::string>& prefs) { _videoDevicePrefs = prefs; }
+
+    // Foreground-masking preference from config ("Video Mask"): off|source|const|motion|decay|
+    // chroma|bgsub, optional "-raw" suffix to skip refinement. $PROJECTM_VIDEO_MASK overrides it.
+    void setVideoMaskPref(const std::string& pref) { _videoMaskPref = pref; }
 
     bool done{false};
     bool mouseDown{false};
@@ -196,6 +204,9 @@ private:
 
     // Preference-ordered video source list (highest priority first).
     std::vector<std::string> _videoDevicePrefs;
+
+    // Foreground-masking preference from config ("Video Mask"); $PROJECTM_VIDEO_MASK overrides.
+    std::string _videoMaskPref;
 
     std::string _presetName; //!< Current preset name
 

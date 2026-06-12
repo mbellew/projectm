@@ -290,6 +290,20 @@ public:
     void VideoSubmitFrame(const void* data, int srcWidth, int srcHeight, int format);
 
     /**
+     * @brief GL texture name of the RGBA8 input surface, sized to the configured texture.
+     * For applications that preprocess frames on the GPU. Returns 0 if not configured.
+     * GL thread only. @see VideoSubmitFrameGPU.
+     */
+    auto VideoInputTexture() const -> unsigned int;
+
+    /**
+     * @brief Submits a frame the application has rendered into VideoInputTexture() on the GPU.
+     * The frame is copied to the history buffer verbatim (alpha = app-supplied mask); preset
+     * alpha modes and mask cleanup are bypassed. GL thread only.
+     */
+    void VideoSubmitFrameGPU();
+
+    /**
      * @brief Sets the chroma-key background color (normalized 0..1) for the video
      * ChromaKey alpha mode. Supplied by the application (scene/camera dependent).
      */
@@ -299,6 +313,13 @@ public:
      * @brief Enables or disables horizontal mirroring of incoming video frames. Off by default.
      */
     void VideoSetMirror(bool mirror);
+
+    /**
+     * @brief Application-global foreground masking override. When mode >= 0 it overrides the
+     * preset's alpha mode and runs the library's masking pipeline (optionally the refinement
+     * back-end); mode < 0 leaves masking under preset control. See Renderer::VideoTexture::AlphaMode.
+     */
+    void VideoSetMaskMode(int mode, bool refine);
 
     /**
      * @brief Returns true if the video-history texture has been configured.

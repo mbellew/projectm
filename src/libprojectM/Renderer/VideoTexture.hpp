@@ -55,7 +55,8 @@ public:
         float value{1.0f};  //!< Motion/Decay: scale. Constant: alpha. ChromaKey: tolerance (0..1, 0=exact). BgSubtract: threshold (0..1).
         float init{1.0f};   //!< Alpha for the very first frame (no history yet).
         float decay{0.9f};  //!< MotionDecay: per-frame persistence (0..1). BackgroundSubtract: background learning rate (set low, e.g. 0.02).
-        int cleanup{0};     //!< Morphological mask cleanup iterations (0 = off). Each iter = an open + close pass.
+        int cleanup{0};     //!< Morphological mask cleanup iterations (0 = off). Each iter = an open + close pass. Ignored when refine is set.
+        bool refine{false}; //!< Run the shared refinement back-end (guided fill -> matte -> temporal -> feather) on the prior's mask.
     };
 
     VideoTexture(int texWidth, int texHeight, int depth);
@@ -75,6 +76,24 @@ public:
     void SubmitFrame(const void* data, int srcWidth, int srcHeight, PixelFormat format);
 
     /**
+     * @brief GL texture name of the RGBA8 input surface, at the configured texture size.
+     *
+     * For applications that preprocess frames on the GPU (e.g. a depth camera that
+     * composites a real foreground mask into alpha). Render your finished RGBA frame
+     * into this texture, then call SubmitFrameGPU(). GL thread only.
+     */
+    uint32_t InputTextureId() const { return m_inputTex; }
+
+    /**
+     * @brief Marks the input surface (see InputTextureId) as filled by the application.
+     *
+     * The next UpdateGPU() copies it into the ring buffer verbatim: RGB as drawn and
+     * alpha taken as the app-supplied mask. The preset's alpha mode and mask cleanup are
+     * bypassed for this frame (the application owns the mask). GL thread only.
+     */
+    void SubmitFrameGPU();
+
+    /**
      * @brief Uploads the most recently staged frame, if any, to the next ring-buffer slice.
      * Must be called on the GL thread.
      */
@@ -92,6 +111,16 @@ public:
      * Applied during GPU preprocessing, so it affects every alpha mode. Off by default.
      */
     void SetMirror(bool mirror) { m_mirror = mirror; }
+
+    /**
+     * @brief Application-global mask-mode override. Foreground extraction is usually a
+     * scene/hardware property the app owns, not the preset. When mode >= 0 it overrides the
+     * preset's per-frame alpha mode and enables/disables the refinement back-end; mode < 0
+     * (the default) leaves masking under preset control.
+     * @param mode AlphaMode value, or -1 to defer to the preset.
+     * @param refine Run the shared refinement back-end when this override is active.
+     */
+    void SetMaskMode(int mode, bool refine) { m_appMaskMode = mode; m_appRefine = refine; }
 
     int Width() const { return m_texWidth; }
     int Height() const { return m_texHeight; }
@@ -121,6 +150,7 @@ private:
     std::mutex m_mutex;
     std::vector<uint8_t> m_stagingBuffer;
     bool m_hasPendingFrame{false};
+    bool m_pendingFrameIsGpu{false}; //!< Pending frame was rendered into m_inputTex by the app (see SubmitFrameGPU).
 
     std::vector<uint8_t> m_workBuffer; //!< Downscaled RGBA frame ready for GPU upload.
     bool m_hasPreviousFrame{false};
@@ -130,19 +160,29 @@ private:
     float m_keyG{0.0f};
     float m_keyB{0.0f};
     bool m_mirror{false}; //!< Horizontally mirror incoming camera frames during preprocessing.
+    int m_appMaskMode{-1}; //!< App-global alpha-mode override (>=0 wins over the preset; -1 = preset-controlled).
+    bool m_appRefine{false}; //!< Run the refinement back-end when the app override is active.
     int m_writeIndex{-1};
     uint32_t m_frameCount{0};
 
     // GPU preprocessing resources (raw GL object names; created/destroyed on the GL thread).
     std::unique_ptr<Shader> m_preprocessShader;
     std::unique_ptr<Shader> m_morphShader; //!< Erode/dilate pass for mask cleanup.
+    std::unique_ptr<Shader> m_fillShader;     //!< B1: color-guided joint-bilateral up-fill.
+    std::unique_ptr<Shader> m_matteShader;    //!< B2: trimap + edge-snapping matte refine.
+    std::unique_ptr<Shader> m_temporalShader; //!< B3: temporal EMA stabilization.
+    std::unique_ptr<Shader> m_featherShader;  //!< B4: composite + feather.
     uint32_t m_inputTex{0};      //!< 2D RGBA8: the uploaded downscaled camera frame.
     uint32_t m_prevTex[2]{0, 0}; //!< 2D RGBA16F ping-pong: processed [rawRGB, alpha].
     uint32_t m_bgTex[2]{0, 0};   //!< 2D RGBA16F ping-pong: background model.
-    uint32_t m_morphTex[2]{0, 0};//!< 2D RGBA16F scratch ping-pong for morphology passes.
+    uint32_t m_morphTex[2]{0, 0};//!< 2D RGBA16F scratch ping-pong for morphology / refinement passes.
+    uint32_t m_stableTex[2]{0, 0};//!< 2D RGBA16F ping-pong: temporal-feedback (stabilized) alpha.
     uint32_t m_fbo{0};
     uint32_t m_vao{0};
+    uint32_t m_vbo{0}; //!< Fullscreen-triangle vertex buffer (Apple GL rejects attributeless draws).
     int m_pingPong{0};           //!< Index of the ping-pong slot written this frame.
+    int m_pingStable{0};         //!< Index of the temporal-feedback slot written this frame.
+    bool m_hasStable{false};     //!< Whether a stabilized previous frame exists for temporal blending.
 };
 
 } // namespace Renderer

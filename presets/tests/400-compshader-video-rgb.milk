@@ -3,7 +3,6 @@ MILKDROP_PRESET_VERSION=201
 PSVERSION=2
 PSVERSION_WARP=2
 PSVERSION_COMP=2
-per_frame_1000=// Motion-reactive alpha. Static pixels stay dark; moving pixels light up.
 
 fDecay=0
 warp=0.000000
@@ -15,9 +14,11 @@ per_frame_1=video_alpha_mode = 1;
 per_frame_2=video_alpha_value = 4.0;
 per_frame_3=video_alpha_init = 0.0;
 
-// Render the current frame's RGB modulated by its motion-derived alpha.
+
+
+// Display current video frame. Screen is transparent black if no video is submitted.
 comp_1=`shader_body
 comp_2=`{
 comp_3=`    float4 vid = GetVideo(uv, 0.0);
-comp_4=`    ret = vid.rgb * vid.a;
+comp_4=`    ret = vid.rgb;
 comp_5=`}

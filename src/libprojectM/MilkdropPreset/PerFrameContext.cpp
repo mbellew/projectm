@@ -1,6 +1,7 @@
 #include "PerFrameContext.hpp"
 
 #include "MilkdropPresetExceptions.hpp"
+#include "PaletteEvalFunctions.hpp"
 
 #include <Logging.hpp>
 
@@ -13,6 +14,7 @@ namespace MilkdropPreset {
 PerFrameContext::PerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100])
     : perFrameCodeContext(projectm_eval_context_create(gmegabuf, globalRegisters))
 {
+    RegisterPaletteFunctions(perFrameCodeContext);
 }
 
 PerFrameContext::~PerFrameContext()

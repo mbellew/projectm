@@ -1,0 +1,23 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+
+fDecay=0
+warp=0.000000
+wave_a=0
+
+per_frame_1=video_alpha_mode = 3;
+per_frame_2=video_alpha_value = 4.0;
+per_frame_3=video_alpha_decay = 0.90;
+per_frame_4=video_alpha_init = 0.0;
+
+
+// Display current video frame. Screen is transparent black if no video is submitted.
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float4 vid = GetVideo(uv, 0.0);
+comp_4=`    // Spring green (0,255,127 in 8-bit) normalized to 0..1; comp colors are 0..1.
+comp_5=`    ret = lerp(float3(0.0, 1.0, 0.498), vid.rgb, vid.a);
+comp_6=`}

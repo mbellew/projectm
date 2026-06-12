@@ -1,7 +1,4 @@
 // Derived from source preset: "Geiss - Skin Dots 10b.milk"
-// Adds: live video injected into the warp-shader feedback, gated by
-// motion detection inside a soft-edged circle, with a bass zoom pulse
-// and treble-driven video reveal.
 MILKDROP_PRESET_VERSION=201
 PSVERSION=2
 PSVERSION_WARP=2
@@ -76,11 +73,6 @@ b1x=1.000000
 b2x=1.000000
 b3x=1.000000
 b1ed=0.250000
-
-video_alpha_mode = 2;
-video_alpha_value = 2.0;
-video_alpha_init = 0.0;
-
 wavecode_0_enabled=0
 wavecode_1_enabled=0
 wavecode_2_enabled=0
@@ -99,9 +91,11 @@ per_frame_7=zoom = zoom + 5.2*(0.01*cos(time*0.317+1) + 0.01*cos(time*0.1132+4))
 per_frame_8=rot  = rot  + 0.5*(0.01*cos(time*0.214+3) + 0.01*cos(time*0.2732+2));
 per_frame_9=wave_mystery = time*0.05;
 per_frame_10=// --- video motion detection ---
-per_frame_11=// Mode 1: library computes per-pixel video alpha as the RGB-difference
+per_frame_11=// Mode 2: library computes per-pixel video alpha as the RGB-difference
 per_frame_12=// magnitude vs. the previous video frame, scaled by video_alpha_value.
-
+per_frame_13=video_alpha_mode = 2;
+per_frame_14=video_alpha_value = 2.0;
+per_frame_15=video_alpha_init = 0.0;
 warp_1=`shader_body
 warp_2=`{
 warp_3=`    // sample previous frame (the feedback buffer, warped by zoom/rot/warp)
@@ -135,7 +129,7 @@ warp_30=`   if (dist < radius) {
 warp_31=`    // edge alpha: 1.0 in the interior, ramping to 0.0 over the last
 warp_32=`    // softness band so the circle blends smoothly into the surroundings.
 warp_33=`    float edge = smoothstep(radius, radius - softness, dist);
-warp_34=`    float4 vid = GetVideo(v*2.5+0.5, 0.0);
+warp_34=`    float4 vid = GetVideo(v*2+0.5, 0.0);
 warp_35=`    // treble lowers the motion floor, so hi-hats/snares reveal more camera.
 warp_36=`    // treb_att is ~1.0 at average level; louder treble drops the floor toward 0.05.
 warp_37=`    float video_floor = max(0.05, 0.2 - (treb_att - 1.0)*0.12);

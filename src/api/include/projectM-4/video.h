@@ -77,6 +77,36 @@ PROJECTM_EXPORT void projectm_video_submit_frame(projectm_handle instance,
                                                  projectm_video_format format);
 
 /**
+ * @brief Returns the GL texture name of the RGBA8 input surface for GPU preprocessing.
+ *
+ * Applications that preprocess frames on the GPU (e.g. a depth camera compositing a real
+ * foreground mask into alpha) render their finished RGBA frame into this texture and then
+ * call projectm_video_submit_frame_gpu(). The texture is sized to the configured slice
+ * dimensions (tex_width x tex_height). Returns 0 if projectm_video_configure() has not been
+ * called. Must be called on the thread with the current GL context.
+ *
+ * @param instance The projectM instance handle.
+ * @return The GL texture name, or 0 if video is not configured.
+ * @since 4.2.0
+ */
+PROJECTM_EXPORT unsigned int projectm_video_get_input_texture(projectm_handle instance);
+
+/**
+ * @brief Submits a frame the application has rendered into the GPU input texture.
+ *
+ * The next call to projectm_render_frame() copies the input texture (see
+ * projectm_video_get_input_texture()) into the next ring-buffer slice verbatim: RGB as
+ * drawn and alpha taken as the application-supplied mask. The preset's alpha mode and mask
+ * cleanup are bypassed for GPU-submitted frames. Must be called on the GL thread, after
+ * rendering into the input texture and before projectm_render_frame(). If
+ * projectm_video_configure() has not been called, this is a no-op.
+ *
+ * @param instance The projectM instance handle.
+ * @since 4.2.0
+ */
+PROJECTM_EXPORT void projectm_video_submit_frame_gpu(projectm_handle instance);
+
+/**
  * @brief Sets the chroma-key background color for the video ChromaKey alpha mode.
  *
  * The key color is scene/camera dependent (the real green-screen color, or the
@@ -104,6 +134,25 @@ PROJECTM_EXPORT void projectm_video_set_chroma_key(projectm_handle instance,
  * @since 4.2.0
  */
 PROJECTM_EXPORT void projectm_video_set_mirror(projectm_handle instance, bool mirror);
+
+/**
+ * @brief Sets an application-global foreground-masking override.
+ *
+ * Foreground extraction (background subtraction, chroma key, depth/person masks) is usually a
+ * scene/hardware property the application owns rather than the preset. When @p mode is >= 0 it
+ * overrides the preset's per-frame alpha mode and runs the library's masking pipeline; when
+ * @p mode is < 0 (the default) masking stays under preset control. @p refine enables the shared
+ * refinement back-end (guided fill, matte, temporal stabilization, feather) on top of the prior.
+ *
+ * Mode values match the library's alpha modes: 0 Source, 1 Constant, 2 Motion, 3 MotionDecay,
+ * 4 ChromaKey, 5 BackgroundSubtract.
+ *
+ * @param instance The projectM instance handle.
+ * @param mode Alpha-mode value to force, or -1 to defer to the preset.
+ * @param refine Run the refinement back-end when the override is active.
+ * @since 4.2.0
+ */
+PROJECTM_EXPORT void projectm_video_set_mask_mode(projectm_handle instance, int mode, bool refine);
 
 /**
  * @brief Returns true if the video-history texture has been configured.

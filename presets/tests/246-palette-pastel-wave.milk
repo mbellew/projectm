@@ -1,0 +1,91 @@
+[preset00]
+// Palette test (derived from 244-wave-smooth-99): the two custom waveforms get their colors
+// from the curated PASTEL palette via the new expression accessors palette_r/g/b(pal, t).
+//
+//   pal : packed palette handle = family + knob. Family 0 = Pastel; knob = vividness (0..1).
+//         Here knob is mildly treble-reactive (clamped < 1 so the handle stays in the Pastel slot).
+//   t   : position 0..1 along the palette curve (Pastel sweeps the full hue loop), scrolled by time.
+//         Wrapped with t - int(t); the pastel hue loop is seamless across the 0/1 boundary.
+//         NOTE: t is CLAMPED to [0,1] by palette_*(), not wrapped -- wrap it yourself if animating.
+//
+// Palette families (integer part of pal); knob = fractional part, in [0,1):
+//   0 = Pastel             knob = vividness
+//   1 = Muted              knob = vividness
+//   2 = Jewel              knob = vividness
+//   3 = Earth              knob = vividness
+//   4 = Monochromatic      knob = HUE (not vividness)
+//   5 = Neon               knob = vividness
+//   6 = SaturatedPrimary   knob = vividness (near no-op; always max)
+// So pal = family + knob, e.g. 0.7 = Pastel@0.70, 5.9 = Neon@0.90, 4.33 = Monochromatic hue 0.33.
+// Keep knob < 1 so it doesn't roll into the next family.
+//
+// No custom warp/comp shaders here - just decay trails - so the pastel colors read clearly.
+
+fDecay=0.96
+fWaveAlpha=0
+fWaveScale=1
+
+// Slow drift + breathing zoom so the colored trails smear into soft ribbons.
+per_frame_1=zoom = 1.004;
+per_frame_2=rot = 0.01*sin(time*0.13);
+per_frame_3=dx = 0.002*sin(time*0.07);
+
+// Four vertical waveforms, evenly spaced at x = 0.2/0.4/0.6/0.8, one per palette family
+// 0..3 (Pastel, Muted, Jewel, Earth). Each is a gradient bar (t = sample sweeps the curve).
+// projectM supports up to 4 custom waveforms (CustomWaveformCount), so 0..3 only.
+
+// CustomWaveform 0 -- Pastel (family 0)
+wavecode_0_enabled=1
+wavecode_0_bDrawThick=1
+wavecode_0_scaling=0.05
+wavecode_0_smoothing=0.0
+wavecode_0_a=1.000000
+wave_0_per_point1=y = sample;
+wave_0_per_point2=x = 0.2 + value1;
+wave_0_per_point3=palette = 3 + clamp(0.5*sin(time*0.11)+0.5, 0, 0.99);
+wave_0_per_point4=t = sample;
+wave_0_per_point5=r = palette_r(palette, t);
+wave_0_per_point6=g = palette_g(palette, t);
+wave_0_per_point7=b = palette_b(palette, t);
+
+// CustomWaveform 1 -- Muted (family 1)
+wavecode_1_enabled=1
+wavecode_1_bDrawThick=1
+wavecode_1_scaling=0.05
+wavecode_1_smoothing=0.0
+wavecode_1_a=1.000000
+wave_1_per_point1=y = sample;
+wave_1_per_point2=x = 0.4 + value1;
+wave_1_per_point3=palette = 4 + clamp(0.5*sin(time*0.11)+0.5, 0, 0.99);
+wave_1_per_point4=t = sample;
+wave_1_per_point5=r = palette_r(palette, t);
+wave_1_per_point6=g = palette_g(palette, t);
+wave_1_per_point7=b = palette_b(palette, t);
+
+// CustomWaveform 2 -- Jewel (family 2)
+wavecode_2_enabled=1
+wavecode_2_bDrawThick=1
+wavecode_2_scaling=0.05
+wavecode_2_smoothing=0.0
+wavecode_2_a=1.000000
+wave_2_per_point1=y = sample;
+wave_2_per_point2=x = 0.6 + value1;
+wave_2_per_point3=palette = 5 + clamp(0.5*sin(time*0.11)+0.5, 0, 0.99);
+wave_2_per_point4=t = sample;
+wave_2_per_point5=r = palette_r(palette, t);
+wave_2_per_point6=g = palette_g(palette, t);
+wave_2_per_point7=b = palette_b(palette, t);
+
+// CustomWaveform 3 -- Earth (family 3)
+wavecode_3_enabled=1
+wavecode_3_bDrawThick=1
+wavecode_3_scaling=0.05
+wavecode_3_smoothing=0.0
+wavecode_3_a=1.000000
+wave_3_per_point1=y = sample;
+wave_3_per_point2=x = 0.8 + value1;
+wave_3_per_point3=palette = 6 + clamp(0.5*sin(time*0.11)+0.5, 0, 0.99);
+wave_3_per_point4=t = sample;
+wave_3_per_point5=r = palette_r(palette, t);
+wave_3_per_point6=g = palette_g(palette, t);
+wave_3_per_point7=b = palette_b(palette, t);

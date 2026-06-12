@@ -1,0 +1,23 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+per_frame_1=// Slit-scan: each screen column samples a different point in time.
+
+fDecay=0
+warp=0.000000
+wave_a=0
+
+per_frame_2=video_alpha_mode = 0;
+per_frame_3=video_alpha_init = 0.0;
+
+// uv.x in [0,1] maps directly to age in [0,1].
+// Left edge = most recent, right edge = oldest available frame.
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float age = uv.x;
+comp_4=`    ret = GetVideo(uv, age).rgb;
+comp_5=`    // comment
+comp_6=`
+comp_7=`}

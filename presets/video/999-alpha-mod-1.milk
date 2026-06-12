@@ -50,9 +50,9 @@ wave_1_per_point2=x=0.65+value2;
 // video_alpha_mode selects how the per-pixel video alpha (vid.a from GetVideo) is computed:
 //   0 = Source      : alpha as-is from the source (1.0 for opaque RGB/X cameras; the app-supplied
 //                     alpha for true RGBA sources). Whole frame is "opaque".
-//   1 = Motion      : alpha = per-pixel RGB difference vs the previous video frame, scaled by
+//   2 = Motion      : alpha = per-pixel RGB difference vs the previous video frame, scaled by
 //                     video_alpha_value. Only moving parts get alpha.
-//   2 = Constant    : alpha = video_alpha_value (clamped 0..1). Uniform see-through whole frame.
+//   1 = Constant    : alpha = video_alpha_value (clamped 0..1). Uniform see-through whole frame.
 //   3 = MotionDecay : alpha = max(motion, previous_alpha * video_alpha_decay). Motion that lingers
 //                     and fades; video_alpha_value scales motion, video_alpha_decay sets persistence.
 //   4 = ChromaKey   : alpha from distance to a key color (set via the host API); video_alpha_value
@@ -65,7 +65,7 @@ wave_1_per_point2=x=0.65+value2;
 //   video_alpha_init  : alpha used on the very first frame, before any history exists (0..1).
 //   video_alpha_decay : persistence (mode 3) / learning rate (mode 5).
 //   video_cleanup     : morphological mask cleanup passes, 0 = off, 1-4 = open+close (modes 1/3/4/5).
-per_frame_1=video_alpha_mode = 1;
+per_frame_1=video_alpha_mode = 3;
 per_frame_2=video_alpha_value = 1.0;
 per_frame_3=video_alpha_decay = 0.9;
 per_frame_4=video_alpha_init = 0.0;
@@ -85,5 +85,5 @@ comp_3=`    ret = GetPixel(uv);
 comp_4=`    float4 vid = GetVideo(uv, 0.0);
 comp_5=`    float  g = lum(ret);
 comp_6=`    ret = saturate(lerp(float3(g,g,g), ret, vid.a));
-comp_7=`
+comp_7=`    ret = ret + vid.rgb * vid.a;
 comp_8=`}

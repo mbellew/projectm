@@ -507,6 +507,18 @@ void projectm_video_submit_frame(projectm_handle instance,
                                        static_cast<int>(format));
 }
 
+unsigned int projectm_video_get_input_texture(projectm_handle instance)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    return projectMInstance->VideoInputTexture();
+}
+
+void projectm_video_submit_frame_gpu(projectm_handle instance)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->VideoSubmitFrameGPU();
+}
+
 void projectm_video_set_chroma_key(projectm_handle instance, float r, float g, float b)
 {
     auto* projectMInstance = handle_to_instance(instance);
@@ -517,6 +529,12 @@ void projectm_video_set_mirror(projectm_handle instance, bool mirror)
 {
     auto* projectMInstance = handle_to_instance(instance);
     projectMInstance->VideoSetMirror(mirror);
+}
+
+void projectm_video_set_mask_mode(projectm_handle instance, int mode, bool refine)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->VideoSetMaskMode(mode, refine);
 }
 
 bool projectm_video_is_active(projectm_handle instance)

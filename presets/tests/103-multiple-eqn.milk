@@ -2,8 +2,9 @@
 per_frame_1000=// one per frame equation
 per_frame_1001=// test multiple equations one line
 
+fWaveAlpha=0
 fDecay=0.98
-zoom=0
+zoom=0.95
 rot=0.0
 warp=0.0
 ob_size=0.2

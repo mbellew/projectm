@@ -27,6 +27,7 @@ test_api_headers(TestMainAPIHeaders
         )
 
 add_executable(projectM-unittest
+        ColorPaletteTest.cpp
         HLSLParserTest.cpp
         LoggingTest.cpp
         MilkdropShaderCommentParsingTest.cpp

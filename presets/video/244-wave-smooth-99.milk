@@ -65,7 +65,7 @@ wave_1_per_point2=x=0.65+value2;
 //   video_alpha_init  : alpha used on the very first frame, before any history exists (0..1).
 //   video_alpha_decay : persistence (mode 3) / learning rate (mode 5).
 //   video_cleanup     : morphological mask cleanup passes, 0 = off, 1-4 = open+close (modes 1/3/4/5).
-per_frame_1=video_alpha_mode = 1;
+per_frame_1=video_alpha_mode = 2;
 per_frame_2=video_alpha_value = 1.0;
 per_frame_3=video_alpha_decay = 0.9;
 per_frame_4=video_alpha_init = 0.0;

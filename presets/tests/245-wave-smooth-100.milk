@@ -1,6 +1,6 @@
 [preset00]
-per_frame_1000=// simple wave
-per_frame_1001=// MODE=6 Line
+per_frame_1=// simple wave
+per_frame_2=// MODE=6 Line
 
 fDecay=0
 warp=0.000000
@@ -23,4 +23,5 @@ wavecode_0_a=1.000000
 wavecode_0_x=0.5
 wavecode_0_y=0.4
 wave_0_per_point1=x=sample;
-wave_0_per_point2=y=y+value1;
+wave_0_per_point2= 
+wave_0_per_point3=y=y+value1;

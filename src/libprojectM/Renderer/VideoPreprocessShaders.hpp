@@ -19,15 +19,15 @@ namespace Renderer {
 //! Fullscreen-triangle vertex shader. Needs no vertex attributes (uses gl_VertexID),
 //! but a VAO must still be bound when drawing under a core profile.
 static constexpr const char* const kVideoPreprocessVertexShader = R"(
+layout(location = 0) in vec2 a_pos; // fullscreen triangle, clip-space positions
 out vec2 v_uv;
 void main()
 {
-    // Single triangle covering the viewport: positions (-1,-1),(3,-1),(-1,3),
-    // texcoords (0,0),(2,0),(0,2).
-    vec2 uv = vec2((gl_VertexID == 1) ? 2.0 : 0.0,
-                   (gl_VertexID == 2) ? 2.0 : 0.0);
-    v_uv = uv;
-    gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+    // NOTE: must use a real vertex attribute (backed by a VBO), not gl_VertexID with an
+    // empty VAO -- Apple's OpenGL core profile rejects attributeless draws with
+    // GL_INVALID_OPERATION ("No vertex array object bound"), silently producing no output.
+    v_uv = a_pos * 0.5 + 0.5;
+    gl_Position = vec4(a_pos, 0.0, 1.0);
 }
 )";
 
@@ -50,9 +50,11 @@ uniform vec3  u_key;           //!< ChromaKey background color (normalized).
 uniform int   u_hasPrev;       //!< 0 on the first frame (no previous frame yet).
 uniform int   u_hasBackground; //!< 0 until the background model has been seeded.
 uniform int   u_mirror;        //!< Non-zero to horizontally mirror the incoming camera frame.
+uniform int   u_outputSelect;  //!< 0 = write processed frame [rgb, alpha]; 1 = write background model.
 
-layout(location = 0) out vec4 o_frame; //!< Processed [rawRGB, alpha].
-layout(location = 1) out vec4 o_bg;    //!< Updated background model.
+// Single output (no MRT): Apple's GL core profile rejects multi-render-target draws here with
+// GL_INVALID_OPERATION. The frame and the background model are written in two separate draws.
+layout(location = 0) out vec4 o_out;
 
 const float INV_MAXDIST = 0.57735026; // 1/sqrt(3): max distance in normalized RGB space.
 const float SOFT = 0.04;              // Feather band width for chroma/background thresholds.
@@ -144,8 +146,7 @@ void main()
         a = srcA;
     }
 
-    o_frame = vec4(rgb, a);
-    o_bg = vec4(bgOut, 1.0);
+    o_out = (u_outputSelect == 0) ? vec4(rgb, a) : vec4(bgOut, 1.0);
 }
 )";
 
@@ -177,6 +178,114 @@ void main()
     if (u_op < 0.0) { a = min(min(min(min(c.a, n), s), e), w); } // erode
     else            { a = max(max(max(max(c.a, n), s), e), w); } // dilate
     o_frame = vec4(c.rgb, a);
+}
+)";
+
+// === Shared refinement back-end (see VIDEO_MASKING_PIPELINE.md). These passes are
+// signal-agnostic: they refine whatever mask the prior (preprocess) pass produced, so every
+// alpha mode benefits. Each consumes/produces [rgb, alpha] at the texture resolution. ===
+
+//! B1 color-guided joint-bilateral up-fill. Fills interior holes/unknowns from color-similar,
+//! confident neighbours and snaps the mask to RGB edges; RGB passes through. "Confidence" is
+//! distance from 0.5, so soft/ambiguous pixels contribute little and crisp fg/bg do the fill.
+static constexpr const char* const kVideoFillFragmentShader = R"(
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_proc;
+uniform vec2  u_texel;
+uniform float u_sigmaColor;
+layout(location = 0) out vec4 o_frame;
+void main()
+{
+    vec4 ctr = texture(u_proc, v_uv);
+    vec3 gI = ctr.rgb;
+    float wsum = 0.0;
+    float asum = 0.0;
+    const int R = 4;
+    for (int dy = -R; dy <= R; ++dy)
+    for (int dx = -R; dx <= R; ++dx)
+    {
+        vec2 uv = v_uv + vec2(float(dx), float(dy)) * u_texel;
+        vec4 s = texture(u_proc, uv);
+        float cd = length(s.rgb - gI);
+        float wColor = exp(-(cd * cd) / (2.0 * u_sigmaColor * u_sigmaColor));
+        float wSpace = exp(-float(dx * dx + dy * dy) / (2.0 * float(R * R)));
+        float wConf = abs(s.a - 0.5) * 2.0;
+        float w = wColor * wSpace * wConf + 1e-4;
+        wsum += w;
+        asum += w * s.a;
+    }
+    o_frame = vec4(gI, (wsum > 0.0) ? asum / wsum : ctr.a);
+}
+)";
+
+//! B2 trimap + matte refine. Confident pixels (outside [u_lo, u_hi]) pass straight through;
+//! the unknown band is pulled toward confident neighbours along RGB edges (cheap matting).
+static constexpr const char* const kVideoMatteFragmentShader = R"(
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_proc;
+uniform vec2  u_texel;
+uniform float u_lo;
+uniform float u_hi;
+uniform float u_sigmaColor;
+layout(location = 0) out vec4 o_frame;
+void main()
+{
+    vec4 ctr = texture(u_proc, v_uv);
+    float a = ctr.a;
+    if (a <= u_lo) { o_frame = vec4(ctr.rgb, 0.0); return; }
+    if (a >= u_hi) { o_frame = vec4(ctr.rgb, 1.0); return; }
+    vec3 gI = ctr.rgb;
+    float wsum = 0.0;
+    float asum = 0.0;
+    const int R = 3;
+    for (int dy = -R; dy <= R; ++dy)
+    for (int dx = -R; dx <= R; ++dx)
+    {
+        vec2 uv = v_uv + vec2(float(dx), float(dy)) * u_texel;
+        vec4 s = texture(u_proc, uv);
+        float confident = (s.a <= u_lo || s.a >= u_hi) ? 1.0 : 0.2;
+        float cd = length(s.rgb - gI);
+        float wColor = exp(-(cd * cd) / (2.0 * u_sigmaColor * u_sigmaColor));
+        float w = wColor * confident + 1e-4;
+        wsum += w;
+        asum += w * clamp(s.a, 0.0, 1.0);
+    }
+    o_frame = vec4(gI, (wsum > 0.0) ? asum / wsum : a);
+}
+)";
+
+//! B3 temporal stabilize. EMA of the alpha against the previous stabilized output (flicker
+//! control matters more than per-frame accuracy once the visualizer warps/echoes the mask).
+static constexpr const char* const kVideoTemporalFragmentShader = R"(
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_cur;
+uniform sampler2D u_prev;
+uniform int   u_hasPrev;
+uniform float u_rate;
+layout(location = 0) out vec4 o_frame;
+void main()
+{
+    vec4 c = texture(u_cur, v_uv);
+    float pa = texture(u_prev, v_uv).a;
+    o_frame = vec4(c.rgb, (u_hasPrev == 1) ? mix(pa, c.a, u_rate) : c.a);
+}
+)";
+
+//! B4 composite + feather. Soft-threshold the stabilized alpha for a feathered silhouette.
+static constexpr const char* const kVideoFeatherFragmentShader = R"(
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_proc;
+uniform float u_lo;
+uniform float u_hi;
+layout(location = 0) out vec4 o_frame;
+void main()
+{
+    vec4 c = texture(u_proc, v_uv);
+    o_frame = vec4(c.rgb, smoothstep(u_lo, u_hi, c.a));
 }
 )";
 

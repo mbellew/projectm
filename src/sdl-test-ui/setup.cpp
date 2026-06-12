@@ -318,11 +318,17 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
 
         app->setFps(config.read<uint32_t>("FPS", 60));
 
+        // Playlist order: shuffle (random) vs. sequential. Default off, so presets play in
+        // playlist order -- alphabetical for a directory, file order for a PROJECTM_PRESET_LIST.
+        // The 'y' key still toggles this at runtime.
+        app->setShuffle(config.read<bool>("Shuffle", false));
+
         // Appliance: start fullscreen and pick capture sources by preference order.
         startFullscreen = config.read<bool>("Fullscreen", false);
         videoMirror = config.read<bool>("Video Mirror", false);
         audioDevicePrefs = splitPreferenceList(config.read<std::string>("Audio Devices", std::string()));
         app->setVideoDevicePrefs(splitPreferenceList(config.read<std::string>("Video Devices", std::string())));
+        app->setVideoMaskPref(config.read<std::string>("Video Mask", std::string()));
 
         // Texture search path(s) for image samplers (e.g. sampler_rand00). ';'-separated,
         // "~" expands to $HOME. Without this the library has no search path, so textured

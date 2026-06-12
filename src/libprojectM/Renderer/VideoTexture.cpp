@@ -30,8 +30,10 @@ VideoTexture::~VideoTexture()
     glDeleteTextures(2, m_prevTex);
     glDeleteTextures(2, m_bgTex);
     glDeleteTextures(2, m_morphTex);
+    glDeleteTextures(2, m_stableTex);
     if (m_fbo) { glDeleteFramebuffers(1, &m_fbo); }
     if (m_vao) { glDeleteVertexArrays(1, &m_vao); }
+    if (m_vbo) { glDeleteBuffers(1, &m_vbo); }
 }
 
 void VideoTexture::CreateTexture()
@@ -61,26 +63,68 @@ void VideoTexture::SubmitFrame(const void* data, int srcWidth, int srcHeight, Pi
     ConvertAndDownscale(static_cast<const uint8_t*>(data), srcWidth, srcHeight, format,
                         m_stagingBuffer.data());
     m_hasPendingFrame = true;
+    m_pendingFrameIsGpu = false;
+}
+
+void VideoTexture::SubmitFrameGPU()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_hasPendingFrame = true;
+    m_pendingFrameIsGpu = true;
 }
 
 void VideoTexture::UpdateGPU(const AlphaParams& params)
 {
+    bool gpuFrame = false;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (!m_hasPendingFrame)
         {
             return;
         }
-        std::swap(m_workBuffer, m_stagingBuffer);
+        gpuFrame = m_pendingFrameIsGpu;
+        if (!gpuFrame)
+        {
+            std::swap(m_workBuffer, m_stagingBuffer);
+        }
         m_hasPendingFrame = false;
     }
 
-    // Upload the freshly downscaled frame to the input texture.
-    glBindTexture(GL_TEXTURE_2D, m_inputTex);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_texWidth, m_texHeight,
-                    GL_RGBA, GL_UNSIGNED_BYTE, m_workBuffer.data());
-    glBindTexture(GL_TEXTURE_2D, 0);
+    if (!gpuFrame)
+    {
+        // Upload the freshly downscaled frame to the input texture. For the GPU path the
+        // application has already rendered its finished frame into m_inputTex.
+        glBindTexture(GL_TEXTURE_2D, m_inputTex);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_texWidth, m_texHeight,
+                        GL_RGBA, GL_UNSIGNED_BYTE, m_workBuffer.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    // Resolve the masking mode and refinement for this frame:
+    //  - App-provided GPU frames carry a finished RGB + mask -> pass through verbatim (Source).
+    //  - An app-global override (>=0) wins over the preset (foreground extraction is a
+    //    scene/hardware property the app owns).
+    //  - Otherwise the preset's per-frame alpha mode applies.
+    AlphaMode effectiveMode;
+    bool refine;
+    if (gpuFrame)
+    {
+        effectiveMode = AlphaMode::Source;
+        refine = false;
+    }
+    else if (m_appMaskMode >= 0)
+    {
+        effectiveMode = static_cast<AlphaMode>(m_appMaskMode);
+        refine = m_appRefine;
+    }
+    else
+    {
+        effectiveMode = params.mode;
+        refine = params.refine;
+    }
+    // The refinement back-end's matte stage subsumes morphological cleanup.
+    const int effectiveCleanup = (gpuFrame || refine) ? 0 : params.cleanup;
 
     m_writeIndex = (m_writeIndex + 1) % m_depth;
 
@@ -91,19 +135,29 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
     GLint prevViewport[4]{};
     glGetIntegerv(GL_VIEWPORT, prevViewport);
 
-    // --- Preprocessing pass: compute the mask into prev[writeIdx] / bg[writeIdx]. ---
+    // The main render leaves GL sampler objects bound to texture units (with mipmap filtering).
+    // Our preprocess textures have no mipmaps, so an inherited sampler makes them incomplete and
+    // the draw fails with GL_INVALID_OPERATION (silent black output). Use the textures' own
+    // parameters by clearing the sampler binding on every unit we touch.
+    for (int unit = 0; unit < 3; ++unit) { glBindSampler(unit, 0); }
+
+    // --- Prior pass: compute [rgb, alpha] into prev[writeIdx], and (BackgroundSubtract only)
+    // the updated background model into bg[writeIdx]. Two SINGLE-output draws rather than one
+    // MRT draw: Apple's GL core profile rejects multi-render-target draws here with
+    // GL_INVALID_OPERATION, silently producing no output (black). ---
+    const GLenum singleBuffer[1] = {GL_COLOR_ATTACHMENT0};
+    const glm::vec2 texel{1.0f / static_cast<float>(m_texWidth), 1.0f / static_cast<float>(m_texHeight)};
+
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_prevTex[writeIdx], 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, m_bgTex[writeIdx], 0);
-    const GLenum drawBuffers[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-    glDrawBuffers(2, drawBuffers);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0); // ensure no stale MRT attachment
+    glDrawBuffers(1, singleBuffer);
 
     glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);
     glViewport(0, 0, m_texWidth, m_texHeight);
 
     m_preprocessShader->Bind();
-    m_preprocessShader->SetUniformInt("u_mode", static_cast<int>(params.mode));
+    m_preprocessShader->SetUniformInt("u_mode", static_cast<int>(effectiveMode));
     m_preprocessShader->SetUniformFloat("u_value", params.value);
     m_preprocessShader->SetUniformFloat("u_init", params.init);
     m_preprocessShader->SetUniformFloat("u_decay", params.decay);
@@ -123,26 +177,93 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
     m_preprocessShader->SetUniformInt("u_bg", 2);
 
     glBindVertexArray(m_vao);
+
+    // Draw A: the processed frame + mask -> prev[writeIdx].
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_prevTex[writeIdx], 0);
+    m_preprocessShader->SetUniformInt("u_outputSelect", 0);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // Draw B (BackgroundSubtract only): the updated background model -> bg[writeIdx].
+    if (effectiveMode == AlphaMode::BackgroundSubtract)
+    {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_bgTex[writeIdx], 0);
+        m_preprocessShader->SetUniformInt("u_outputSelect", 1);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
     glBindVertexArray(0);
 
-    // --- Optional morphological cleanup of the mask (foreground-biased). ---
-    // Dilation-biased close: dilate (grow + fill pinholes) then one fewer erode, so the
-    // net effect grows/keeps foreground and fills holes but NEVER erodes-first (an
-    // opening would shrink thin/dark foreground away). We prioritize not losing the
-    // subject over removing background speckle. Operates only on the alpha channel,
-    // ping-ponging through the scratch textures, ending back in prev[writeIdx].
-    if (params.cleanup > 0)
+    uint32_t finalTex = m_prevTex[writeIdx]; // prior output, unless replaced by a refinement below
+
+    if (refine)
     {
-        int iterations = params.cleanup > 4 ? 4 : params.cleanup;
+        // --- Shared refinement back-end (see VIDEO_MASKING_PIPELINE.md):
+        //     B1 guided fill -> B2 matte -> B3 temporal -> B4 feather. ---
+        glDrawBuffers(1, singleBuffer);
+        glBindVertexArray(m_vao);
+
+        // Helper for the single-input [rgb,alpha] passes (fill/matte/feather use "u_proc").
+        auto runPass = [&](Shader& shader, uint32_t srcTex, uint32_t dstTex) {
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstTex, 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, srcTex);
+            shader.SetUniformInt("u_proc", 0);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        };
+
+        // B1: color-guided up-fill, prev[writeIdx] -> morph[0].
+        m_fillShader->Bind();
+        m_fillShader->SetUniformFloat2("u_texel", texel);
+        m_fillShader->SetUniformFloat("u_sigmaColor", 0.12f);
+        runPass(*m_fillShader, m_prevTex[writeIdx], m_morphTex[0]);
+
+        // B2: trimap + matte, morph[0] -> morph[1].
+        m_matteShader->Bind();
+        m_matteShader->SetUniformFloat2("u_texel", texel);
+        m_matteShader->SetUniformFloat("u_lo", 0.2f);
+        m_matteShader->SetUniformFloat("u_hi", 0.8f);
+        m_matteShader->SetUniformFloat("u_sigmaColor", 0.1f);
+        runPass(*m_matteShader, m_morphTex[0], m_morphTex[1]);
+
+        // B3: temporal EMA, (morph[1], stable[read]) -> stable[write].
+        const int stWrite = 1 - m_pingStable;
+        m_temporalShader->Bind();
+        m_temporalShader->SetUniformInt("u_hasPrev", m_hasStable ? 1 : 0);
+        m_temporalShader->SetUniformFloat("u_rate", 0.5f);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_stableTex[stWrite], 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_morphTex[1]);
+        m_temporalShader->SetUniformInt("u_cur", 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_stableTex[m_pingStable]);
+        m_temporalShader->SetUniformInt("u_prev", 1);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        // B4: composite + feather, stable[write] -> morph[0] (the ring source).
+        m_featherShader->Bind();
+        m_featherShader->SetUniformFloat("u_lo", 0.25f);
+        m_featherShader->SetUniformFloat("u_hi", 0.75f);
+        runPass(*m_featherShader, m_stableTex[stWrite], m_morphTex[0]);
+
+        glBindVertexArray(0);
+        m_pingStable = stWrite;
+        m_hasStable = true;
+        finalTex = m_morphTex[0];
+    }
+    else if (effectiveCleanup > 0)
+    {
+        // --- Optional morphological cleanup of the mask (foreground-biased). ---
+        // Dilation-biased close: dilate (grow + fill pinholes) then one fewer erode, so the
+        // net effect grows/keeps foreground and fills holes but NEVER erodes-first (an
+        // opening would shrink thin/dark foreground away). We prioritize not losing the
+        // subject over removing background speckle. Operates only on the alpha channel,
+        // ping-ponging through the scratch textures, ending back in prev[writeIdx].
+        int iterations = effectiveCleanup > 4 ? 4 : effectiveCleanup;
         std::vector<float> ops; // -1 = erode, +1 = dilate
         for (int i = 0; i < iterations + 1; ++i) { ops.push_back(1.0f); } // dilate (grow + fill holes)
         for (int i = 0; i < iterations; ++i) { ops.push_back(-1.0f); }    // erode (one fewer = net grow)
 
         m_morphShader->Bind();
-        m_morphShader->SetUniformFloat2("u_texel", {1.0f / static_cast<float>(m_texWidth),
-                                                    1.0f / static_cast<float>(m_texHeight)});
-        const GLenum singleBuffer[1] = {GL_COLOR_ATTACHMENT0};
+        m_morphShader->SetUniformFloat2("u_texel", texel);
         uint32_t src = m_prevTex[writeIdx];
         for (size_t p = 0; p < ops.size(); ++p)
         {
@@ -158,12 +279,11 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
             glBindVertexArray(0);
             src = dst;
         }
-        // Re-attach prev[writeIdx] as color 0 for the ring copy (it already is after the
-        // final pass, but make the draw-buffer state explicit).
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_prevTex[writeIdx], 0);
     }
 
-    // Copy the processed frame (color attachment 0) into the ring-buffer slice.
+    // Copy the final processed frame into the ring-buffer slice.
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, finalTex, 0);
+    glDrawBuffers(1, singleBuffer);
     glReadBuffer(GL_COLOR_ATTACHMENT0);
     glBindTexture(GL_TEXTURE_3D, m_texture->TextureID());
     glCopyTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, m_writeIndex, 0, 0, m_texWidth, m_texHeight);
@@ -182,7 +302,7 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
 
     m_pingPong = 1 - m_pingPong;
     m_hasPreviousFrame = true;
-    if (params.mode == AlphaMode::BackgroundSubtract)
+    if (effectiveMode == AlphaMode::BackgroundSubtract)
     {
         m_hasBackground = true;
     }
@@ -274,6 +394,18 @@ void VideoTexture::CreateGpuResources()
     m_morphShader = std::make_unique<Shader>();
     m_morphShader->CompileProgram(header + kVideoPreprocessVertexShader,
                                   header + kVideoMorphFragmentShader);
+    m_fillShader = std::make_unique<Shader>();
+    m_fillShader->CompileProgram(header + kVideoPreprocessVertexShader,
+                                 header + kVideoFillFragmentShader);
+    m_matteShader = std::make_unique<Shader>();
+    m_matteShader->CompileProgram(header + kVideoPreprocessVertexShader,
+                                  header + kVideoMatteFragmentShader);
+    m_temporalShader = std::make_unique<Shader>();
+    m_temporalShader->CompileProgram(header + kVideoPreprocessVertexShader,
+                                     header + kVideoTemporalFragmentShader);
+    m_featherShader = std::make_unique<Shader>();
+    m_featherShader->CompileProgram(header + kVideoPreprocessVertexShader,
+                                    header + kVideoFeatherFragmentShader);
 
     // Input texture: the uploaded downscaled camera frame (RGBA8).
     glGenTextures(1, &m_inputTex);
@@ -287,8 +419,8 @@ void VideoTexture::CreateGpuResources()
 
     // Ping-pong processed + background textures, float for accumulation precision.
     const std::vector<float> zeros(static_cast<size_t>(m_texWidth) * static_cast<size_t>(m_texHeight) * 4, 0.0f);
-    uint32_t* pingPongTextures[6] = {&m_prevTex[0], &m_prevTex[1], &m_bgTex[0], &m_bgTex[1],
-                                     &m_morphTex[0], &m_morphTex[1]};
+    uint32_t* pingPongTextures[8] = {&m_prevTex[0], &m_prevTex[1], &m_bgTex[0], &m_bgTex[1],
+                                     &m_morphTex[0], &m_morphTex[1], &m_stableTex[0], &m_stableTex[1]};
     for (uint32_t* tex : pingPongTextures)
     {
         glGenTextures(1, tex);
@@ -303,7 +435,20 @@ void VideoTexture::CreateGpuResources()
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glGenFramebuffers(1, &m_fbo);
+
+    // Fullscreen triangle backed by a real VBO + enabled attribute. Apple's OpenGL core
+    // profile rejects attributeless (gl_VertexID-only) draws with GL_INVALID_OPERATION, so
+    // every preprocess/refine pass must source its vertices from this buffer.
     glGenVertexArrays(1, &m_vao);
+    glBindVertexArray(m_vao);
+    glGenBuffers(1, &m_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    const float triangle[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
+    glBufferData(GL_ARRAY_BUFFER, sizeof(triangle), triangle, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 float VideoTexture::NormalizedWritePosition() const

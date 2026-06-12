@@ -605,6 +605,27 @@ void ProjectM::VideoSubmitFrame(const void* data, int srcWidth, int srcHeight, i
                                 static_cast<Renderer::VideoTexture::PixelFormat>(format));
 }
 
+auto ProjectM::VideoInputTexture() const -> unsigned int
+{
+    return m_videoTexture ? m_videoTexture->InputTextureId() : 0;
+}
+
+void ProjectM::VideoSubmitFrameGPU()
+{
+    if (m_videoTexture)
+    {
+        m_videoTexture->SubmitFrameGPU();
+    }
+}
+
+void ProjectM::VideoSetMaskMode(int mode, bool refine)
+{
+    if (m_videoTexture)
+    {
+        m_videoTexture->SetMaskMode(mode, refine);
+    }
+}
+
 void ProjectM::VideoSetChromaKey(float r, float g, float b)
 {
     if (m_videoTexture)

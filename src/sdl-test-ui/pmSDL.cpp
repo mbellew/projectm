@@ -54,6 +54,10 @@ projectMSDL::projectMSDL(SDL_GLContext glCtx, const std::string& presetPath)
     projectm_get_window_size(_projectM, &_width, &_height);
     projectm_playlist_set_preset_switched_event_callback(_playlist, &projectMSDL::presetSwitchedEvent, static_cast<void*>(this));
     projectm_playlist_add_path(_playlist, presetPath.c_str(), true, false);
+    // Directory scan order is filesystem-defined; sort by full path so playback is alphabetical
+    // (folders grouped, names ascending). A PROJECTM_PRESET_LIST keeps its file order instead.
+    projectm_playlist_sort(_playlist, 0, projectm_playlist_size(_playlist),
+                           SORT_PREDICATE_FULL_PATH, SORT_ORDER_ASCENDING);
     projectm_playlist_set_shuffle(_playlist, _shuffle);
     dumpOpenGLInfo();
     enableGLDebugOutput();
@@ -96,6 +100,38 @@ void projectMSDL::startVideoCapture()
     if (!_videoCapture)
     {
         _videoCapture = std::make_unique<VideoCapture>();
+    }
+
+    // Application-global foreground masking via $PROJECTM_VIDEO_MASK. The library does the
+    // masking now (app-side pipeline retired); the app just selects the mode. Tokens map to
+    // library alpha modes; append "-raw" to skip the refinement back-end (A/B comparison).
+    //   off (default) | source | const | motion | decay | chroma | bgsub
+    {
+        int maskMode = -1; // -1 = preset-controlled
+        bool refine = true;
+        const char* maskEnv = std::getenv("PROJECTM_VIDEO_MASK");
+        std::string maskStr = maskEnv ? std::string(maskEnv) : _videoMaskPref; // env overrides config
+        if (!maskStr.empty())
+        {
+            std::string m = maskStr;
+            if (m.size() > 4 && m.compare(m.size() - 4, 4, "-raw") == 0)
+            {
+                refine = false;
+                m.erase(m.size() - 4);
+            }
+            if (m == "source") { maskMode = 0; }
+            else if (m == "const" || m == "constant") { maskMode = 1; }
+            else if (m == "motion") { maskMode = 2; }
+            else if (m == "decay" || m == "motiondecay") { maskMode = 3; }
+            else if (m == "chroma" || m == "chromakey") { maskMode = 4; }
+            else if (m == "bgsub" || m == "bg" || m == "on" || m == "1") { maskMode = 5; }
+        }
+        projectm_video_set_mask_mode(_projectM, maskMode, refine);
+        if (maskMode >= 0)
+        {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Video foreground masking: mode=%d refine=%d.",
+                        maskMode, refine ? 1 : 0);
+        }
     }
 
     auto* handle = _projectM;
@@ -154,6 +190,7 @@ void projectMSDL::toggleVideoCapture()
         startVideoCapture();
     }
 }
+
 #endif
 
 /* Stretch projectM across multiple monitors */
@@ -694,6 +731,12 @@ void projectMSDL::setFps(size_t fps)
 size_t projectMSDL::fps() const
 {
     return _fps;
+}
+
+void projectMSDL::setShuffle(bool shuffle)
+{
+    _shuffle = shuffle;
+    projectm_playlist_set_shuffle(_playlist, _shuffle);
 }
 
 void projectMSDL::UpdateWindowTitle()

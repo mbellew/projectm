@@ -7,11 +7,12 @@ PSVERSION_WARP=2
 PSVERSION_COMP=2
 
 // Need persistence (decay>0) so the warped previous frame is visible. Set to 0 = no trails.
-fDecay=0.9
+fDecay=0.97
 
 // MilkdropWaveform
 fWaveAlpha=0
-fWaveScale=1
+fWaveScale=2
+fWarpScale=0
 
 // Per-pixel warp confined to the edge regions:
 //   left of x=0.35  -> push content toward the left  (dx < 0)
@@ -21,8 +22,9 @@ fWaveScale=1
 // Increase/decrease the 0.12 to make the effect stronger/weaker; flip its sign to swap directions.
 per_pixel_1=lz = max(0, 0.33 - x);
 per_pixel_2=rz = max(0, x - 0.67);
-per_pixel_3=dx = 0.12*(rz - lz);
-per_pixel_4=warp = 0; // 0.2*(lz+rz>0);
+per_pixel_3=dx = 0.05 * (x - 0.5);
+per_pixel_4=cx = 0.49;
+per_pixel_5=warp = 0;
 
 // CustomWaveform
 wavecode_0_enabled=1
@@ -34,7 +36,7 @@ wavecode_0_g=1.000000
 wavecode_0_b=1.000000
 wavecode_0_a=1.000000
 wave_0_per_point1=y=sample;
-wave_0_per_point2=x=0.35+value1;
+wave_0_per_point2=x=0.5+value1;
 
 
 wavecode_1_enabled=1
@@ -45,7 +47,7 @@ wavecode_1_g=1.000000
 wavecode_1_b=0.000000
 wavecode_1_a=1.000000
 wave_1_per_point1=y=sample;
-wave_1_per_point2=x=0.65+value2;
+wave_1_per_point2=x=0.51+value2;
 
 // video_alpha_mode selects how the per-pixel video alpha (vid.a from GetVideo) is computed:
 //   0 = Source      : alpha as-is from the source (1.0 for opaque RGB/X cameras; the app-supplied
@@ -74,16 +76,17 @@ per_frame_4=video_alpha_init = 0.0;
 warp_1=`shader_body
 warp_2=`{
 warp_3=`    float4 vid = GetVideo(uv, 0.0);
-warp_4=`    float dx = (uv.x - 0.5) * vid.a;
+warp_4=`    float dx = 2 * (uv.x - 0.5) * vid.a;
 warp_5=`    float2 uvwarp = uv - float2(0.12*dx,0); 
-warp_6=`    ret = 0.95 * GetPixel(uvwarp);
-warp_7=`}
+warp_6=`    float3 pix = GetPixel(uvwarp);
+warp_7=`    ret = 0.95 * pix; //  + tex2D(sampler_noise_hq, uvwarp+pix.rg) * 0.01;
+warp_8=`}
 
 comp_1=`shader_body
 comp_2=`{
 comp_3=`    ret = GetPixel(uv);
 comp_4=`    float4 vid = GetVideo(uv, 0.0);
 comp_5=`    float  g = lum(ret);
-comp_6=`    ret = saturate(lerp(float3(g,g,g), ret, vid.a));
-comp_7=`
+comp_6=`    ret = saturate(lerp(float3(g,g,g), ret, vid.a*2));
+comp_7=`    //ret = float2(1.0-ret.x, rety.y);
 comp_8=`}

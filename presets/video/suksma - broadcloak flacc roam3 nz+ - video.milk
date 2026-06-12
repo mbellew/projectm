@@ -399,7 +399,7 @@ per_frame_122=q12=.4+cos(atime*.00613828348)*.4;
 per_frame_123=q13=.4+sin(atime*.00598593455)*.4;
 per_frame_124=monitor=q13;
 per_frame_125=// video motion detection: alpha = RGB-difference magnitude vs. previous frame
-per_frame_126=video_alpha_mode = 1;
+per_frame_126=video_alpha_mode = 2;
 per_frame_127=video_alpha_value = 1.0;
 per_frame_128=video_alpha_init = 0.0;
 per_pixel_1=zoom = 1 + q1/25;

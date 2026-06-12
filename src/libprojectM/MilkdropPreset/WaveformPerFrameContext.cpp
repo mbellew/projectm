@@ -2,6 +2,7 @@
 
 #include "CustomWaveform.hpp"
 #include "MilkdropPresetExceptions.hpp"
+#include "PaletteEvalFunctions.hpp"
 #include "PerFrameContext.hpp"
 
 #include <Logging.hpp>
@@ -15,6 +16,7 @@ namespace MilkdropPreset {
 WaveformPerFrameContext::WaveformPerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100])
     : perFrameCodeContext(projectm_eval_context_create(gmegabuf, globalRegisters))
 {
+    RegisterPaletteFunctions(perFrameCodeContext);
 }
 
 WaveformPerFrameContext::~WaveformPerFrameContext()

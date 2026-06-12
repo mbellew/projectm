@@ -85,5 +85,6 @@ comp_3=`    ret = GetPixel(uv);
 comp_4=`    float4 vid = GetVideo(uv, 0.0);
 comp_5=`    float  g = lum(ret);
 comp_6=`    ret = saturate(lerp(float3(g,g,g), ret, vid.a));
+comp_6=`    ret = lerp(ret.rgb, vid.rgb, vid.a);
 comp_7=`
 comp_8=`}
