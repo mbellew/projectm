@@ -589,6 +589,12 @@ void ProjectM::VideoConfigure(int width, int height, int depth)
         return;
     }
     m_videoTexture = std::make_unique<Renderer::VideoTexture>(width, height, depth);
+    // Re-apply the app-global settings; the new texture starts at its own
+    // defaults, so without this a configure after set_mask_mode/mirror/chroma
+    // would silently revert to preset-controlled masking.
+    m_videoTexture->SetMaskMode(m_videoMaskMode, m_videoMaskRefine);
+    m_videoTexture->SetMirror(m_videoMirror);
+    m_videoTexture->SetChromaKey(m_videoKeyR, m_videoKeyG, m_videoKeyB);
     if (m_textureManager)
     {
         m_textureManager->RegisterTexture("video", m_videoTexture->GetTexture());
@@ -620,6 +626,8 @@ void ProjectM::VideoSubmitFrameGPU()
 
 void ProjectM::VideoSetMaskMode(int mode, bool refine)
 {
+    m_videoMaskMode = mode;
+    m_videoMaskRefine = refine;
     if (m_videoTexture)
     {
         m_videoTexture->SetMaskMode(mode, refine);
@@ -628,6 +636,9 @@ void ProjectM::VideoSetMaskMode(int mode, bool refine)
 
 void ProjectM::VideoSetChromaKey(float r, float g, float b)
 {
+    m_videoKeyR = r;
+    m_videoKeyG = g;
+    m_videoKeyB = b;
     if (m_videoTexture)
     {
         m_videoTexture->SetChromaKey(r, g, b);
@@ -636,6 +647,7 @@ void ProjectM::VideoSetChromaKey(float r, float g, float b)
 
 void ProjectM::VideoSetMirror(bool mirror)
 {
+    m_videoMirror = mirror;
     if (m_videoTexture)
     {
         m_videoTexture->SetMirror(mirror);

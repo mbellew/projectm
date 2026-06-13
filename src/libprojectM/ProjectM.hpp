@@ -387,6 +387,13 @@ private:
     std::unique_ptr<TimeKeeper> m_timeKeeper;                                     //!< Keeps the different timers used to render and switch presets.
     std::unique_ptr<UserSprites::SpriteManager> m_spriteManager;                  //!< Manages all types of user sprites.
     std::unique_ptr<Renderer::VideoTexture> m_videoTexture;                       //!< 3D ring-buffer texture for app-provided video frames.
+    // App-global video settings persist here (not just on the texture) so they
+    // survive (re)creation of m_videoTexture in VideoConfigure, independent of
+    // the order in which the app calls configure vs. the setters.
+    int m_videoMaskMode{-1};      //!< App mask-mode override (-1 = preset-controlled).
+    bool m_videoMaskRefine{false};
+    bool m_videoMirror{false};
+    float m_videoKeyR{0.0f}, m_videoKeyG{0.0f}, m_videoKeyB{0.0f};
 };
 
 } // namespace libprojectM
