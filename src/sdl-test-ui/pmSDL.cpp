@@ -296,9 +296,15 @@ void projectMSDL::startVideoCapture()
 
 void projectMSDL::stopVideoCapture()
 {
+    // Stop both backends and (inside Stop) drain in-flight callbacks/threads
+    // before any submit_frame / SegMasker state can be torn down.
     if (_videoCapture)
     {
         _videoCapture->Stop();
+    }
+    if (_depthCapture)
+    {
+        _depthCapture->Stop();
     }
 }
 

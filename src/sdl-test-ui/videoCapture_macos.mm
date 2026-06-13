@@ -251,6 +251,16 @@ void VideoCapture::Stop()
         return;
     }
     [m_impl->session stopRunning];
+    // Wait for any in-flight frame callback to finish before returning. The
+    // delegate runs on this serial queue, so a sync barrier blocks until the
+    // currently-executing callback (which may be deep in a SegMasker ONNX
+    // Run()) completes — otherwise tearing down the masker/handle right after
+    // Stop() would free state out from under a running inference (SIGSEGV).
+    if (m_impl->queue)
+    {
+        dispatch_sync(m_impl->queue, ^{
+        });
+    }
     [m_impl->delegate clearCallback];
     m_impl->session = nil;
     m_impl->delegate = nil;
