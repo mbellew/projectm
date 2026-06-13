@@ -49,6 +49,8 @@
 #include "setup.hpp"
 #ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
 #include "videoCapture.hpp"
+#include "depthCapture.hpp"
+#include "segMask.hpp"
 #include <chrono>
 #include <memory>
 #endif
@@ -163,8 +165,17 @@ public:
     void setVideoDevicePrefs(const std::vector<std::string>& prefs) { _videoDevicePrefs = prefs; }
 
     // Foreground-masking preference from config ("Video Mask"): off|source|const|motion|decay|
-    // chroma|bgsub, optional "-raw" suffix to skip refinement. $PROJECTM_VIDEO_MASK overrides it.
+    // chroma|bgsub|seg, optional "-raw" suffix to skip refinement. $PROJECTM_VIDEO_MASK overrides it.
     void setVideoMaskPref(const std::string& pref) { _videoMaskPref = pref; }
+
+    // ONNX person-seg model path ("Video Seg Model" config); empty = default
+    // ($HOME/.projectM/models/rvm_mobilenetv3.onnx). $PROJECTM_SEG_MODEL overrides it.
+    void setVideoSegModel(const std::string& path) { _segModelPath = path; }
+
+    // ONNX person-seg quality level ("Video Seg Quality" config): 1=fast/256,
+    // 2=balanced/384, 3=quality/512. 0 = unset (defaults to 2). Higher = crisper
+    // matte (thin limbs steadier) but slower. $PROJECTM_SEG_QUALITY overrides.
+    void setVideoSegQuality(int quality) { _segQuality = quality; }
 
     bool done{false};
     bool mouseDown{false};
@@ -208,6 +219,12 @@ private:
     // Foreground-masking preference from config ("Video Mask"); $PROJECTM_VIDEO_MASK overrides.
     std::string _videoMaskPref;
 
+    // ONNX person-seg model path ("Video Seg Model"); empty = default. $PROJECTM_SEG_MODEL overrides.
+    std::string _segModelPath;
+
+    // ONNX person-seg quality level ("Video Seg Quality"): 1/2/3 -> 256/384/512; 0 = unset (2).
+    int _segQuality{0};
+
     std::string _presetName; //!< Current preset name
 
     // Frame-rate tracking: counts rendered frames over a ~1s wall-clock window and logs the
@@ -219,5 +236,7 @@ private:
 
 #ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
     std::unique_ptr<VideoCapture> _videoCapture;
+    std::unique_ptr<DepthCapture> _depthCapture; //!< Luxonis OAK depth-camera backend (when selected).
+    std::unique_ptr<SegMasker> _segMasker;       //!< ONNX person-segmentation backend (when selected).
 #endif
 };

@@ -21,3 +21,19 @@ Aspect Correction = true	# Custom Shape Aspect Correction
 Preset Path = presets # preset location
 Title Font = Vera.ttf
 Menu Font = VeraMono.ttf
+
+# Audio/video capture (SDL test UI). All optional.
+#Audio Devices = BlackHole, MacBook   # preference-ordered, case-insensitive name substrings
+#Video Devices = FaceTime             # preference-ordered camera name substrings (e.g. OBS, FaceTime)
+# Selecting a Luxonis OAK depth camera: include "OAK" or "Luxonis" in Video Devices.
+# Requires building with -DENABLE_LUXONIS=ON (depthai-core). The OAK backend derives a
+# depth-based foreground mask and feeds it as alpha; the library refines the edges.
+#Video Devices = OAK
+# Foreground masking for a plain webcam (the OAK path sets this automatically):
+#   off (default) | source | const | motion | decay | chroma | bgsub | seg   (append -raw to skip refine)
+# "seg" = ONNX person segmentation (Robust Video Matting) on the webcam color frame: a clean,
+# time-aligned person matte. Requires building with -DENABLE_ONNX_SEG=ON and a model at
+# ~/.projectM/models/rvm_mobilenetv3.onnx (override with Video Seg Model / $PROJECTM_SEG_MODEL).
+#Video Mask = seg
+# Seg quality 1/2/3 -> 256/384/512 processing size (higher = crisper, slower). Default 2.
+#Video Seg Quality = 2

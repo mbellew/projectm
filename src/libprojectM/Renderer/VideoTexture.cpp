@@ -228,7 +228,10 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
         const int stWrite = 1 - m_pingStable;
         m_temporalShader->Bind();
         m_temporalShader->SetUniformInt("u_hasPrev", m_hasStable ? 1 : 0);
-        m_temporalShader->SetUniformFloat("u_rate", 0.5f);
+        // Temporal-EMA blend toward the current frame: 1.0 = no smoothing (no
+        // lag), lower = steadier but the mask trails motion. 0.8 keeps light
+        // flicker suppression while tracking movement tightly.
+        m_temporalShader->SetUniformFloat("u_rate", 0.8f);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_stableTex[stWrite], 0);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, m_morphTex[1]);

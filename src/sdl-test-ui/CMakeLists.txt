@@ -15,6 +15,73 @@ if(ENABLE_VIDEO_CAPTURE AND APPLE)
     list(APPEND _video_capture_sources videoCapture_macos.mm)
 endif()
 
+# Luxonis OAK (depthai-core) depth camera for depth-enhanced foreground masking.
+# Off by default. When on, we locate an *installed* depthai-core via
+# find_package(depthai). depthai-core uses the Hunter package manager, which
+# requires HunterGate to run before project() — so it CANNOT be consumed via
+# FetchContent/add_subdirectory. Build & install it standalone instead, e.g.:
+#
+#   git clone --recursive -b v2.30.0 https://github.com/luxonis/depthai-core
+#   cmake -S depthai-core -B build-depthai -DBUILD_SHARED_LIBS=ON \
+#         -DDEPTHAI_OPENCV_SUPPORT=OFF -DCMAKE_INSTALL_PREFIX=$HOME/.local/depthai-core \
+#         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+#   cmake --build build-depthai --target install --parallel
+#
+# then configure this project with
+#   -DENABLE_LUXONIS=ON -DCMAKE_PREFIX_PATH=$HOME/.local/depthai-core
+# (or -Ddepthai_DIR=$HOME/.local/depthai-core/lib/cmake/depthai). If depthai
+# isn't found we still build a no-op stub so the app links unchanged.
+option(ENABLE_LUXONIS "Enable Luxonis OAK depth-camera capture in the SDL test UI." OFF)
+
+set(_luxonis_found OFF)
+if(ENABLE_LUXONIS)
+    find_package(depthai CONFIG QUIET)
+    if(depthai_FOUND)
+        set(_luxonis_found ON)
+        message(STATUS "Luxonis: using installed depthai-core (${depthai_DIR}).")
+    else()
+        message(WARNING "ENABLE_LUXONIS is on but depthai-core was not found. "
+                "Build/install it standalone and pass -DCMAKE_PREFIX_PATH to its "
+                "install prefix (see src/sdl-test-ui/CMakeLists.txt). Building the no-op stub.")
+    endif()
+endif()
+
+if(_luxonis_found)
+    list(APPEND _video_capture_sources depthCapture.hpp depthCapture_oak.cpp)
+else()
+    list(APPEND _video_capture_sources depthCapture.hpp depthCapture_stub.cpp)
+endif()
+
+# ONNX Runtime person-segmentation masking. Off by default. Uses an installed
+# onnxruntime (the prebuilt osx-arm64 package ships a CMake config + the CoreML
+# execution provider for ANE/GPU). Configure with:
+#   -DENABLE_ONNX_SEG=ON -DCMAKE_PREFIX_PATH=$HOME/.local/onnxruntime
+# A real vs stub backend is chosen so the app always links.
+option(ENABLE_ONNX_SEG "Enable ONNX person-segmentation masking in the SDL test UI." OFF)
+
+set(_onnx_found OFF)
+if(ENABLE_ONNX_SEG)
+    # The prebuilt onnxruntime ships a CMake config, but its imported target
+    # points at a non-existent include/onnxruntime subdir (headers live in
+    # include/). Locate headers + lib directly instead (searches CMAKE_PREFIX_PATH).
+    find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h)
+    find_library(ONNXRUNTIME_LIBRARY onnxruntime)
+    if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
+        set(_onnx_found ON)
+        message(STATUS "ONNX seg: using onnxruntime (${ONNXRUNTIME_LIBRARY}).")
+    else()
+        message(WARNING "ENABLE_ONNX_SEG is on but onnxruntime was not found. "
+                "Install the prebuilt package and pass -DCMAKE_PREFIX_PATH to it. "
+                "Building the no-op stub.")
+    endif()
+endif()
+
+if(_onnx_found)
+    list(APPEND _video_capture_sources segMask.hpp segMask.cpp)
+else()
+    list(APPEND _video_capture_sources segMask.hpp segMask_stub.cpp)
+endif()
+
 add_executable(projectM-Test-UI
         ConfigFile.cpp
         ConfigFile.h
@@ -29,6 +96,18 @@ add_executable(projectM-Test-UI
         setup.hpp
         ${_video_capture_sources}
         )
+
+if(_luxonis_found)
+    target_compile_definitions(projectM-Test-UI PRIVATE PROJECTM_LUXONIS_ENABLED=1)
+    # depthai-core exposes depthai::core (and depthai::opencv); we only need core.
+    target_link_libraries(projectM-Test-UI PRIVATE depthai::core)
+endif()
+
+if(_onnx_found)
+    target_compile_definitions(projectM-Test-UI PRIVATE PROJECTM_ONNX_ENABLED=1)
+    target_include_directories(projectM-Test-UI PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
+    target_link_libraries(projectM-Test-UI PRIVATE ${ONNXRUNTIME_LIBRARY})
+endif()
 
 if(ENABLE_VIDEO_CAPTURE AND APPLE)
     target_compile_definitions(projectM-Test-UI PRIVATE PROJECTM_VIDEO_CAPTURE_ENABLED=1)

@@ -30,6 +30,8 @@
 
 #include "pmSDL.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <string>
@@ -106,10 +108,12 @@ void projectMSDL::startVideoCapture()
     // Application-global foreground masking via $PROJECTM_VIDEO_MASK. The library does the
     // masking now (app-side pipeline retired); the app just selects the mode. Tokens map to
     // library alpha modes; append "-raw" to skip the refinement back-end (A/B comparison).
-    //   off (default) | source | const | motion | decay | chroma | bgsub
+    //   off (default) | source | const | motion | decay | chroma | bgsub | seg
+    // "seg" = host ONNX person segmentation on the webcam color frame (handled below).
+    bool useSeg = false;
+    bool maskRefine = true;
     {
         int maskMode = -1; // -1 = preset-controlled
-        bool refine = true;
         const char* maskEnv = std::getenv("PROJECTM_VIDEO_MASK");
         std::string maskStr = maskEnv ? std::string(maskEnv) : _videoMaskPref; // env overrides config
         if (!maskStr.empty())
@@ -117,21 +121,26 @@ void projectMSDL::startVideoCapture()
             std::string m = maskStr;
             if (m.size() > 4 && m.compare(m.size() - 4, 4, "-raw") == 0)
             {
-                refine = false;
+                maskRefine = false;
                 m.erase(m.size() - 4);
             }
-            if (m == "source") { maskMode = 0; }
+            if (m == "seg" || m == "person") { useSeg = true; }
+            else if (m == "source") { maskMode = 0; }
             else if (m == "const" || m == "constant") { maskMode = 1; }
             else if (m == "motion") { maskMode = 2; }
             else if (m == "decay" || m == "motiondecay") { maskMode = 3; }
             else if (m == "chroma" || m == "chromakey") { maskMode = 4; }
             else if (m == "bgsub" || m == "bg" || m == "on" || m == "1") { maskMode = 5; }
         }
-        projectm_video_set_mask_mode(_projectM, maskMode, refine);
-        if (maskMode >= 0)
+        // Seg sets its own mode (Source + refine) once the model loads, below.
+        if (!useSeg)
         {
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Video foreground masking: mode=%d refine=%d.",
-                        maskMode, refine ? 1 : 0);
+            projectm_video_set_mask_mode(_projectM, maskMode, maskRefine);
+            if (maskMode >= 0)
+            {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Video foreground masking: mode=%d refine=%d.",
+                            maskMode, maskRefine ? 1 : 0);
+            }
         }
     }
 
@@ -148,6 +157,138 @@ void projectMSDL::startVideoCapture()
         }
     }
     preferredDevices.insert(preferredDevices.end(), _videoDevicePrefs.begin(), _videoDevicePrefs.end());
+
+    // Host ONNX person-segmentation path: run the matting model on the webcam
+    // color frame. The matte comes from the same frame, so it is time-aligned to
+    // the RGB (no depth-sensor lag). Submit the finished RGBA through Source +
+    // refine. On any failure, fall through to the plain webcam path.
+    if (useSeg)
+    {
+        if (!SegMasker::IsSupported())
+        {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Video Mask=seg requested but ONNX support is not built in "
+                        "(configure with -DENABLE_ONNX_SEG=ON). Falling back to webcam.");
+        }
+        else
+        {
+            if (!_segMasker)
+            {
+                _segMasker = std::make_unique<SegMasker>();
+            }
+            // Model path: $PROJECTM_SEG_MODEL > "Video Seg Model" config > default.
+            std::string modelPath;
+            if (const char* env = std::getenv("PROJECTM_SEG_MODEL"); env && env[0])
+            {
+                modelPath = env;
+            }
+            else if (!_segModelPath.empty())
+            {
+                modelPath = _segModelPath;
+            }
+            else if (const char* home = std::getenv("HOME"))
+            {
+                modelPath = std::string(home) + "/.projectM/models/rvm_mobilenetv3.onnx";
+            }
+
+            // Quality level: $PROJECTM_SEG_QUALITY > "Video Seg Quality" config > 2.
+            int quality = _segQuality;
+            if (const char* q = std::getenv("PROJECTM_SEG_QUALITY"); q && q[0])
+            {
+                quality = std::atoi(q);
+            }
+            if (quality < 1 || quality > 3)
+            {
+                quality = 2;
+            }
+            const int segSize = (quality == 1) ? 256 : (quality == 3) ? 512 : 384;
+
+            const bool loaded = _segMasker->IsLoaded() || _segMasker->Load(modelPath, segSize);
+            if (!loaded)
+            {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Video Mask=seg: model '%s' failed to load; falling back to webcam.",
+                            modelPath.c_str());
+            }
+            else
+            {
+                projectm_video_set_mask_mode(_projectM, 0 /*Source*/, maskRefine);
+                auto* masker = _segMasker.get();
+                auto outBuf = std::make_shared<std::vector<uint8_t>>();
+                // Library owns the mirror (projectm_video_set_mirror), so the matte
+                // travels with the RGB either way — seg passes mirror=false.
+                const bool segOk = _videoCapture->Start(
+                    [handle, masker, outBuf](const void* data, int width, int height,
+                                             VideoCapture::PixelFormat /*fmt*/) {
+                        masker->Process(static_cast<const uint8_t*>(data), width, height,
+                                        /*mirror=*/false, *outBuf);
+                        projectm_video_submit_frame(handle, outBuf->data(),
+                                                    static_cast<unsigned int>(width),
+                                                    static_cast<unsigned int>(height),
+                                                    PROJECTM_VIDEO_FORMAT_RGBA);
+                    },
+                    preferredDevices);
+                if (segOk)
+                {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "ONNX person-seg masking started (Source + refine).");
+                    return;
+                }
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Video Mask=seg: webcam failed to start; falling back.");
+            }
+        }
+    }
+
+    // Luxonis OAK depth-camera path: if a preferred device names an OAK/Luxonis
+    // unit and depthai support is built in (ENABLE_LUXONIS), use the depth
+    // backend. It composites a real depth-derived foreground mask into alpha, so
+    // force Source + refine — the library snaps the mask to the color edges. On
+    // failure (no device / not built in) fall through to the plain webcam path.
+    bool wantDepth = false;
+    for (const auto& d : preferredDevices)
+    {
+        std::string lo = d;
+        std::transform(lo.begin(), lo.end(), lo.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (lo.find("oak") != std::string::npos || lo.find("luxonis") != std::string::npos)
+        {
+            wantDepth = true;
+            break;
+        }
+    }
+    if (wantDepth)
+    {
+        if (!DepthCapture::IsSupported())
+        {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Luxonis OAK requested but depthai support is not built in "
+                        "(configure with -DENABLE_LUXONIS=ON). Falling back to webcam.");
+        }
+        else
+        {
+            if (!_depthCapture)
+            {
+                _depthCapture = std::make_unique<DepthCapture>();
+            }
+            projectm_video_set_mask_mode(_projectM, 0 /*Source*/, true /*refine*/);
+            const bool depthOk = _depthCapture->Start(
+                [handle](const void* data, int width, int height) {
+                    projectm_video_submit_frame(handle, data, static_cast<unsigned int>(width),
+                                                static_cast<unsigned int>(height),
+                                                PROJECTM_VIDEO_FORMAT_RGBA);
+                });
+            if (depthOk)
+            {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "Luxonis OAK depth capture started (Source + refine masking).");
+                return;
+            }
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Luxonis OAK capture failed to start; falling back to webcam.");
+        }
+    }
+
     const bool ok = _videoCapture->Start(
         [handle](const void* data, int width, int height, VideoCapture::PixelFormat fmt) {
             projectm_video_format pmFmt = PROJECTM_VIDEO_FORMAT_BGRA;

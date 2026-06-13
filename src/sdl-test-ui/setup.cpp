@@ -329,6 +329,8 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         audioDevicePrefs = splitPreferenceList(config.read<std::string>("Audio Devices", std::string()));
         app->setVideoDevicePrefs(splitPreferenceList(config.read<std::string>("Video Devices", std::string())));
         app->setVideoMaskPref(config.read<std::string>("Video Mask", std::string()));
+        app->setVideoSegModel(config.read<std::string>("Video Seg Model", std::string()));
+        app->setVideoSegQuality(config.read<int>("Video Seg Quality", 0));
 
         // Texture search path(s) for image samplers (e.g. sampler_rand00). ';'-separated,
         // "~" expands to $HOME. Without this the library has no search path, so textured
