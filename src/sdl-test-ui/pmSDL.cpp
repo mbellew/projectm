@@ -105,43 +105,23 @@ void projectMSDL::startVideoCapture()
         _videoCapture = std::make_unique<VideoCapture>();
     }
 
-    // Application-global foreground masking via $PROJECTM_VIDEO_MASK. The library does the
-    // masking now (app-side pipeline retired); the app just selects the mode. Tokens map to
-    // library alpha modes; append "-raw" to skip the refinement back-end (A/B comparison).
-    //   off (default) | source | const | motion | decay | chroma | bgsub | seg
-    // "seg" = host ONNX person segmentation on the webcam color frame (handled below).
+    // $PROJECTM_VIDEO_MASK / "Video Mask" selects the app-side mask PRODUCER that
+    // fills the submitted frame's alpha channel with a clean foreground mask. It
+    // does NOT force the library's alpha mode — the preset's video_alpha_mode
+    // decides what to do with the supplied alpha (0/Source = use it as-is; 2/3 =
+    // ignore it and synthesize motion/motion-decay from RGB; a shader can ignore
+    // alpha entirely for full video). The library alpha mode stays preset-controlled.
+    //   off (default) = submit raw video (opaque alpha)
+    //   seg           = host ONNX person segmentation on the webcam color frame
+    //   (an OAK/Luxonis video device additionally produces a depth mask, below)
     bool useSeg = false;
-    bool maskRefine = true;
     {
-        int maskMode = -1; // -1 = preset-controlled
         const char* maskEnv = std::getenv("PROJECTM_VIDEO_MASK");
-        std::string maskStr = maskEnv ? std::string(maskEnv) : _videoMaskPref; // env overrides config
-        if (!maskStr.empty())
-        {
-            std::string m = maskStr;
-            if (m.size() > 4 && m.compare(m.size() - 4, 4, "-raw") == 0)
-            {
-                maskRefine = false;
-                m.erase(m.size() - 4);
-            }
-            if (m == "seg" || m == "person") { useSeg = true; }
-            else if (m == "source") { maskMode = 0; }
-            else if (m == "const" || m == "constant") { maskMode = 1; }
-            else if (m == "motion") { maskMode = 2; }
-            else if (m == "decay" || m == "motiondecay") { maskMode = 3; }
-            else if (m == "chroma" || m == "chromakey") { maskMode = 4; }
-            else if (m == "bgsub" || m == "bg" || m == "on" || m == "1") { maskMode = 5; }
-        }
-        // Seg sets its own mode (Source + refine) once the model loads, below.
-        if (!useSeg)
-        {
-            projectm_video_set_mask_mode(_projectM, maskMode, maskRefine);
-            if (maskMode >= 0)
-            {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Video foreground masking: mode=%d refine=%d.",
-                            maskMode, maskRefine ? 1 : 0);
-            }
-        }
+        std::string m = maskEnv ? std::string(maskEnv) : _videoMaskPref; // env overrides config
+        // Tolerate a legacy trailing "-raw" (the old refine toggle; refine is now
+        // a library/preset concern, not an app one).
+        if (m.size() > 4 && m.compare(m.size() - 4, 4, "-raw") == 0) { m.erase(m.size() - 4); }
+        useSeg = (m == "seg" || m == "person");
     }
 
     auto* handle = _projectM;
@@ -212,7 +192,8 @@ void projectMSDL::startVideoCapture()
             }
             else
             {
-                projectm_video_set_mask_mode(_projectM, 0 /*Source*/, maskRefine);
+                // Producer only: supply the matte in alpha; the preset's
+                // video_alpha_mode (default 0/Source) decides whether to use it.
                 auto* masker = _segMasker.get();
                 auto outBuf = std::make_shared<std::vector<uint8_t>>();
                 // Library owns the mirror (projectm_video_set_mirror), so the matte
@@ -231,7 +212,7 @@ void projectMSDL::startVideoCapture()
                 if (segOk)
                 {
                     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                                "ONNX person-seg masking started (Source + refine).");
+                                "ONNX person-seg producing mask in alpha (preset chooses via video_alpha_mode).");
                     return;
                 }
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -242,9 +223,9 @@ void projectMSDL::startVideoCapture()
 
     // Luxonis OAK depth-camera path: if a preferred device names an OAK/Luxonis
     // unit and depthai support is built in (ENABLE_LUXONIS), use the depth
-    // backend. It composites a real depth-derived foreground mask into alpha, so
-    // force Source + refine — the library snaps the mask to the color edges. On
-    // failure (no device / not built in) fall through to the plain webcam path.
+    // backend. It composites a depth-derived foreground mask into alpha (a mask
+    // producer, like seg); the preset decides what to do with it. On failure
+    // (no device / not built in) fall through to the plain webcam path.
     bool wantDepth = false;
     for (const auto& d : preferredDevices)
     {
@@ -271,7 +252,8 @@ void projectMSDL::startVideoCapture()
             {
                 _depthCapture = std::make_unique<DepthCapture>();
             }
-            projectm_video_set_mask_mode(_projectM, 0 /*Source*/, true /*refine*/);
+            // Producer only: the depth band fills alpha; the preset's
+            // video_alpha_mode (default 0/Source) decides whether to use it.
             const bool depthOk = _depthCapture->Start(
                 [handle](const void* data, int width, int height) {
                     projectm_video_submit_frame(handle, data, static_cast<unsigned int>(width),
@@ -281,7 +263,7 @@ void projectMSDL::startVideoCapture()
             if (depthOk)
             {
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "Luxonis OAK depth capture started (Source + refine masking).");
+                            "Luxonis OAK depth producing mask in alpha (preset chooses via video_alpha_mode).");
                 return;
             }
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
