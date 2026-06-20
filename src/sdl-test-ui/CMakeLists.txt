@@ -2,17 +2,25 @@ if(NOT ENABLE_SDL_UI OR ENABLE_EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL Android)
     return()
 endif()
 
-# Camera capture for the video-history texture. Enabled on macOS by default; other
-# platforms get a no-op stub via the CMake conditional below.
+# Camera capture for the video-history texture. Enabled by default on macOS
+# (AVFoundation) and Linux (V4L2); other platforms have no backend yet and fall
+# back to a build without camera capture.
 set(_video_capture_default OFF)
-if(APPLE)
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL Linux)
     set(_video_capture_default ON)
 endif()
 option(ENABLE_VIDEO_CAPTURE "Enable camera capture in the SDL test UI." ${_video_capture_default})
 
+# Per-platform capture backend. _have_video_capture tracks whether a real backend
+# is compiled in (drives the PROJECTM_VIDEO_CAPTURE_ENABLED define below).
 set(_video_capture_sources videoCapture.hpp)
+set(_have_video_capture OFF)
 if(ENABLE_VIDEO_CAPTURE AND APPLE)
     list(APPEND _video_capture_sources videoCapture_macos.mm)
+    set(_have_video_capture ON)
+elseif(ENABLE_VIDEO_CAPTURE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
+    list(APPEND _video_capture_sources videoCapture_linux.cpp)
+    set(_have_video_capture ON)
 endif()
 
 # Luxonis OAK (depthai-core) depth camera for depth-enhanced foreground masking.
@@ -109,8 +117,11 @@ if(_onnx_found)
     target_link_libraries(projectM-Test-UI PRIVATE ${ONNXRUNTIME_LIBRARY})
 endif()
 
-if(ENABLE_VIDEO_CAPTURE AND APPLE)
+if(_have_video_capture)
     target_compile_definitions(projectM-Test-UI PRIVATE PROJECTM_VIDEO_CAPTURE_ENABLED=1)
+endif()
+
+if(ENABLE_VIDEO_CAPTURE AND APPLE)
     set_source_files_properties(videoCapture_macos.mm PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"
             )
@@ -121,6 +132,10 @@ if(ENABLE_VIDEO_CAPTURE AND APPLE)
             "-framework CoreVideo"
             "-framework Foundation"
             )
+elseif(ENABLE_VIDEO_CAPTURE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
+    # The V4L2 backend runs capture on a std::thread.
+    find_package(Threads REQUIRED)
+    target_link_libraries(projectM-Test-UI PRIVATE Threads::Threads)
 endif()
 
 target_link_libraries(projectM-Test-UI

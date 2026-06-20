@@ -19,7 +19,9 @@
 #include "segMask.hpp"
 
 #include <onnxruntime_cxx_api.h>
+#ifdef __APPLE__
 #include <coreml_provider_factory.h>
+#endif
 #include <SDL2/SDL.h>
 
 #include <algorithm>
@@ -270,6 +272,9 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
         Ort::SessionOptions options;
         options.SetIntraOpNumThreads(2);
         options.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+#ifdef __APPLE__
+        // CoreML execution provider (ANE/GPU) is macOS-only. Other platforms run on
+        // the default CPU provider; a GPU/NPU EP could be added per-platform later.
         if (EnvInt("PROJECTM_SEG_COREML", 1) != 0)
         {
             try
@@ -297,6 +302,7 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
                             "[SegMasker] CoreML EP unavailable (%s); using CPU.", e.what());
             }
         }
+#endif
 
         m_impl->session = std::make_unique<Ort::Session>(m_impl->env, modelPath.c_str(), options);
 

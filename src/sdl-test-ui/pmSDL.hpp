@@ -51,9 +51,10 @@
 #include "videoCapture.hpp"
 #include "depthCapture.hpp"
 #include "segMask.hpp"
+#endif
+
 #include <chrono>
 #include <memory>
-#endif
 
 
 #if defined _MSC_VER
