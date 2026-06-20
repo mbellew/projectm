@@ -184,6 +184,41 @@ void projectMSDL::startVideoCapture()
             const int segSize = (quality == 1) ? 256 : (quality == 3) ? 512 : 384;
 
             const bool loaded = _segMasker->IsLoaded() || _segMasker->Load(modelPath, segSize);
+
+            // Optional second model: $PROJECTM_SEG_MODEL2 > "Video Seg Model 2". Its matte is
+            // multiplied into the primary's (e.g. RVM soft matte x person mask = soft people-only).
+            if (loaded)
+            {
+                std::string modelPath2;
+                if (const char* env = std::getenv("PROJECTM_SEG_MODEL2"); env && env[0])
+                {
+                    modelPath2 = env;
+                }
+                else if (!_segModelPath2.empty())
+                {
+                    modelPath2 = _segModelPath2;
+                }
+                if (!modelPath2.empty())
+                {
+                    // Combine mode: $PROJECTM_SEG_COMBINE > "Video Seg Combine" config > multiply.
+                    std::string combine = "multiply";
+                    if (const char* env = std::getenv("PROJECTM_SEG_COMBINE"); env && env[0])
+                    {
+                        combine = env;
+                    }
+                    else if (!_segCombine.empty())
+                    {
+                        combine = _segCombine;
+                    }
+                    float gate = 0.5f;
+                    if (const char* g = std::getenv("PROJECTM_SEG_GATE"); g && g[0])
+                    {
+                        gate = static_cast<float>(std::atof(g));
+                    }
+                    _segMasker->LoadSecondary(modelPath2, segSize, 0.0f, combine, gate);
+                }
+            }
+
             if (!loaded)
             {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,

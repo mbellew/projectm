@@ -28,6 +28,12 @@ bool SegMasker::Load(const std::string& /*modelPath*/, int /*size*/, float /*dow
     return false;
 }
 
+bool SegMasker::LoadSecondary(const std::string& /*modelPath*/, int /*size*/, float /*downsampleRatio*/,
+                              const std::string& /*combine*/, float /*gateThreshold*/)
+{
+    return false;
+}
+
 bool SegMasker::IsLoaded() const
 {
     return false;

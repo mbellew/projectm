@@ -84,6 +84,10 @@ public:
     PRJM_EVAL_F* bass_att{};
     PRJM_EVAL_F* mid_att{};
     PRJM_EVAL_F* treb_att{};
+    PRJM_EVAL_F* beat_phase{}; //!< Phase-locked beat phase, 0..2*pi (0 = on the beat).
+    PRJM_EVAL_F* beat_onset{}; //!< 1.0 on frames where a beat landed, else 0.0.
+    PRJM_EVAL_F* beat_bpm{};   //!< Estimated tempo (BPM), 0 until locked.
+    PRJM_EVAL_F* beat_conf{};  //!< Beat-tracker confidence, 0..1.
     PRJM_EVAL_F* wave_a{};
     PRJM_EVAL_F* wave_av{}; //!< /*FLOATBUF*/ Base-waveform per-pixel alpha-channel state value (wave_av, default 1.0).
     PRJM_EVAL_F* wave_r{};
@@ -150,6 +154,7 @@ public:
     PRJM_EVAL_F* video_alpha_init{};
     PRJM_EVAL_F* video_alpha_decay{};
     PRJM_EVAL_F* video_cleanup{};
+    PRJM_EVAL_F* video_refine{};
 
     PRJM_EVAL_F q_values_after_init_code[QVarCount]{};
 };

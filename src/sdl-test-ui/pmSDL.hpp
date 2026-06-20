@@ -172,6 +172,14 @@ public:
     // ($HOME/.projectM/models/rvm_mobilenetv3.onnx). $PROJECTM_SEG_MODEL overrides it.
     void setVideoSegModel(const std::string& path) { _segModelPath = path; }
 
+    // Optional second seg model ("Video Seg Model 2"); its matte multiplies the primary's
+    // (e.g. RVM x person mask). Empty = none. $PROJECTM_SEG_MODEL2 overrides it.
+    void setVideoSegModel2(const std::string& path) { _segModelPath2 = path; }
+
+    // How the 2nd model combines ("Video Seg Combine"): "multiply" (default) or "gate".
+    // $PROJECTM_SEG_COMBINE overrides.
+    void setVideoSegCombine(const std::string& mode) { _segCombine = mode; }
+
     // ONNX person-seg quality level ("Video Seg Quality" config): 1=fast/256,
     // 2=balanced/384, 3=quality/512. 0 = unset (defaults to 2). Higher = crisper
     // matte (thin limbs steadier) but slower. $PROJECTM_SEG_QUALITY overrides.
@@ -221,6 +229,12 @@ private:
 
     // ONNX person-seg model path ("Video Seg Model"); empty = default. $PROJECTM_SEG_MODEL overrides.
     std::string _segModelPath;
+
+    // Optional 2nd seg model ("Video Seg Model 2"); matte multiplies the primary's. $PROJECTM_SEG_MODEL2 overrides.
+    std::string _segModelPath2;
+
+    // How the 2nd model combines ("Video Seg Combine"): "multiply"/"gate". $PROJECTM_SEG_COMBINE overrides.
+    std::string _segCombine;
 
     // ONNX person-seg quality level ("Video Seg Quality"): 1/2/3 -> 256/384/512; 0 = unset (2).
     int _segQuality{0};

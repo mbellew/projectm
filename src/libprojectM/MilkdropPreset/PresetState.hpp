@@ -136,6 +136,7 @@ public:
     BlendableFloat videoAlphaInit{1.0f};  //!< Alpha for the very first frame (no history yet).
     BlendableFloat videoAlphaDecay{0.9f}; //!< motion-decay: persistence (0..1); background-subtract: learning rate (set low, e.g. 0.02).
     BlendableFloat videoCleanup{0.0f};    //!< Morphological mask-cleanup iterations (0=off, 1-4 = open+close passes).
+    BlendableFloat videoRefine{0.0f};     //!< >0 runs the shared refinement back-end (guided fill -> matte -> temporal -> feather) on the mask.
 
     /*FLOATBUF*/ float alphaInit{1.0f};     //!< Pattern A-channel (per-pixel state) value cleared to at preset load.
     /*FLOATBUF*/ bool alphaCarryover{false}; //!< If true, don't clear the A channel on load (inherit prior state).
@@ -166,6 +167,7 @@ public:
 
     std::string warpShader;      //!< Warp shader code.
     std::string compositeShader; //!< Composite shader code.
+    std::string videoShader;     //!< Video preprocess "combine" shader code (computes the alpha/rgb written into the video history). Empty = use the fixed video_alpha_mode path.
 
     std::weak_ptr<Renderer::Shader> untexturedShader; //!< Shader used to draw untextured primitives, e.g. waveforms.
     /*FLOATBUF*/ std::weak_ptr<Renderer::Shader> untexturedDualSourceShader; //!< Dual-source variant that writes per-pixel state (av) into the pattern alpha; null if unsupported.

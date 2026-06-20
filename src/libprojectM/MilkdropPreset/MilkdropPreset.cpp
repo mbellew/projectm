@@ -75,6 +75,20 @@ void MilkdropPreset::Initialize(const Renderer::RenderContext& renderContext)
     m_perPixelMesh.CompileWarpShader(m_state);
     m_finalComposite.CompileCompositeShader(m_state);
 
+    if (m_videoShader)
+    {
+        try
+        {
+            m_videoShader->CompileVideoShader();
+            LOG_DEBUG("[MilkdropPreset] Successfully compiled video shader code.");
+        }
+        catch (const Renderer::ShaderException& ex)
+        {
+            LOG_WARN("[MilkdropPreset] Error compiling video shader code: " + ex.message() + " - Falling back to the fixed video_alpha_mode path.");
+            m_videoShader.reset();
+        }
+    }
+
     /*FLOATBUF*/
     // Initialize the per-pixel state stored in the pattern buffer's alpha channel. Unless the
     // preset opts into carryover (inherit whatever state is already there), clear only the A
@@ -231,11 +245,16 @@ void MilkdropPreset::PerFrameUpdate()
         params.init = static_cast<float>(*m_perFrameContext.video_alpha_init);
         params.decay = static_cast<float>(*m_perFrameContext.video_alpha_decay);
         params.cleanup = static_cast<int>(*m_perFrameContext.video_cleanup);
-        m_state.renderContext.videoTexture->UpdateGPU(params);
+        params.refine = *m_perFrameContext.video_refine > 0.5;
+        // A preset video_ shader (if present and compiled) authors the alpha/rgb written into the
+        // history, superseding the fixed alpha-mode path for this frame.
+        Renderer::Shader* alphaShader = m_videoShader ? &m_videoShader->Shader() : nullptr;
+        m_state.renderContext.videoTexture->UpdateGPU(params, alphaShader);
 
         m_state.renderContext.videoZWrite = m_state.renderContext.videoTexture->NormalizedWritePosition();
         m_state.renderContext.videoZRange = m_state.renderContext.videoTexture->NormalizedRange();
         m_state.renderContext.videoFrameCount = static_cast<float>(m_state.renderContext.videoTexture->FrameCount());
+        m_state.renderContext.videoBufferSeconds = m_state.renderContext.videoTexture->BufferSeconds();
     }
 }
 
@@ -338,6 +357,25 @@ void MilkdropPreset::LoadShaderCode()
 {
     m_perPixelMesh.LoadWarpShader(m_state);
     m_finalComposite.LoadCompositeShader(m_state);
+
+    // Optional video_ shader: gated on the same version flag as warp/comp (shaders enabled at
+    // all). Only the HLSL->GLSL string prep happens here; the GL compile is deferred to
+    // Initialize() where a GL context is current (see CompileVideoShader).
+    m_videoShader.reset();
+    if (m_state.compositeShaderVersion > 0 && !m_state.videoShader.empty())
+    {
+        try
+        {
+            m_videoShader = std::make_unique<MilkdropShader>(MilkdropShader::ShaderType::VideoShader);
+            m_videoShader->LoadCode(m_state.videoShader);
+            LOG_DEBUG("[MilkdropPreset] Successfully loaded video shader code.");
+        }
+        catch (const Renderer::ShaderException& ex)
+        {
+            LOG_WARN("[MilkdropPreset] Error loading video shader code: " + ex.message() + " - Falling back to the fixed video_alpha_mode path.");
+            m_videoShader.reset();
+        }
+    }
 }
 
 auto MilkdropPreset::ParseFilename(const std::string& filename) -> std::string

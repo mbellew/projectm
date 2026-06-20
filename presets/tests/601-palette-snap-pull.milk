@@ -1,0 +1,32 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+fDecay=0
+warp=0.000000
+wave_a=0
+fWaveAlpha=0
+
+// Palette snap/pull demo. A colorful plasma field is regraded four ways through the Jewel
+// palette (handle 2.7), one per screen quadrant:
+//   top-left     = original plasma
+//   top-right    = PaletteSnap  (hard nearest-point on the curve)
+//   bottom-left  = PalettePull  (soft inverse-distance blend, sigma 0.25)
+//   bottom-right = PaletteMap   (luminance gradient-map)
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float3 c = 0.5 + 0.5 * float3(sin(uv.x*6.2 + time),
+comp_4=`                                 sin(uv.y*6.2 + time*0.7),
+comp_5=`                                 sin((uv.x + uv.y)*5.0));
+comp_6=`    float pal = 2.7; // Jewel, knob 0.7
+comp_7=`    float3 outc;
+comp_8=`    if (uv.x < 0.5) {
+comp_9=`        if (uv.y < 0.5) outc = c;
+comp_10=`        else            outc = PalettePull(pal, c, 1.0, 0.25);
+comp_11=`    } else {
+comp_12=`        if (uv.y < 0.5) outc = PaletteSnap(pal, c, 1.0);
+comp_13=`        else            outc = PaletteMap(pal, c);
+comp_14=`    }
+comp_15=`    ret = outc;
+comp_16=`}

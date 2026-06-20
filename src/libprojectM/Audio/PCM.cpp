@@ -32,6 +32,8 @@ void PCM::AddToBuffer(
         {
             m_inputBufferR[bufferOffset] = m_inputBufferL[bufferOffset];
         }
+        // Feed the beat tracker a continuous mono stream (independent of the render frame rate).
+        m_beatDetect.Push(0.5f * (m_inputBufferL[bufferOffset] + m_inputBufferR[bufferOffset]));
     }
     m_start = (m_start + sampleCount) % AudioBufferSamples;
 }
@@ -71,6 +73,8 @@ void PCM::UpdateFrameAudioData(double secondsSinceLastFrame, uint32_t frame)
     m_middles.Update(m_spectrumL, secondsSinceLastFrame, frame);
     m_treble.Update(m_spectrumL, secondsSinceLastFrame, frame);
 
+    // 5. Advance the phase-locked beat tracker (drains its own mono ring, FPS-independent).
+    m_beatDetect.Update(secondsSinceLastFrame);
 }
 
 auto PCM::GetFrameAudioData() const -> FrameAudioData
@@ -92,6 +96,11 @@ auto PCM::GetFrameAudioData() const -> FrameAudioData
 
     data.vol = (data.bass + data.mid + data.treb) * 0.333f;
     data.volAtt = (data.bassAtt + data.midAtt + data.trebAtt) * 0.333f;
+
+    data.beatPhase = static_cast<float>(m_beatDetect.Phase());
+    data.beatOnset = m_beatDetect.Onset() ? 1.0f : 0.0f;
+    data.bpm = static_cast<float>(m_beatDetect.Bpm());
+    data.beatConf = static_cast<float>(m_beatDetect.Confidence());
 
     return data;
 }

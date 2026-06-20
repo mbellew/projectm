@@ -44,6 +44,7 @@ public:
     float videoZWrite{0.0f};             //!< Normalized Z of the most-recent video slice (uniform video_z_write).
     float videoZRange{0.0f};             //!< Normalized Z range of valid slices (uniform video_z_range).
     float videoFrameCount{0.0f};         //!< Number of video frames uploaded so far (uniform video_frame_count).
+    float videoBufferSeconds{0.0f};      //!< Wall-clock seconds spanned by valid slices (uniform video_buffer_seconds).
 };
 
 } // namespace Renderer

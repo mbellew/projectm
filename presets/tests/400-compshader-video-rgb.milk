@@ -8,13 +8,9 @@ fDecay=0
 warp=0.000000
 wave_a=0
 
-// Mode 1 = motion detection. Library computes per-pixel alpha as the magnitude of
-// the RGB difference vs. the previous frame, scaled by video_alpha_value.
-per_frame_1=video_alpha_mode = 1;
+per_frame_1=video_alpha_mode = 0;
 per_frame_2=video_alpha_value = 4.0;
 per_frame_3=video_alpha_init = 0.0;
-
-
 
 // Display current video frame. Screen is transparent black if no video is submitted.
 comp_1=`shader_body

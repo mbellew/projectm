@@ -40,6 +40,14 @@ uniform float4   _qh;           // q vars bank 8 [q29-q32]
 uniform float    video_z_write;       // normalized Z (slice center) of the most recent frame
 uniform float    video_z_range;       // normalized Z range covered by valid (filled) slices
 uniform float    video_frame_count;   // total frames uploaded so far (0 on first frame)
+uniform float    video_buffer_seconds; // wall-clock seconds of history the valid slices span (0 until measured)
+
+// Engine beat tracker (Audio/BeatDetect). Available directly in warp/comp shaders. Names are
+// namespaced under beat_* to avoid colliding with preset-defined "beat"/"bpm" variables.
+uniform float    beat_phase;          // phase-locked beat phase, 0 .. 2*pi (0 = on the beat)
+uniform float    beat_onset;          // 1.0 on frames where a beat landed, else 0.0
+uniform float    beat_bpm;            // estimated tempo (BPM); 0 until the tracker locks
+uniform float    beat_conf;           // beat-tracker confidence, 0 .. 1
 
 // note: in general, don't use the current time w/the *dynamic* rotations!
 
@@ -156,6 +164,12 @@ uniform float4x3 rot_rand4;
 #define GetBlur2(uv) (tex2D(sampler_blur2,uv).xyz*_c5.z + _c5.w)
 #define GetBlur3(uv) (tex2D(sampler_blur3,uv).xyz*_c6.x + _c6.y)
 
+// Blurred alpha (per-pixel state). Unlike the color channels above, alpha is blurred
+// in its native [0,1] range (no min/max renormalization), so it's read back directly.
+#define GetBlurA1(uv) (tex2D(sampler_blur1,uv).a)
+#define GetBlurA2(uv) (tex2D(sampler_blur2,uv).a)
+#define GetBlurA3(uv) (tex2D(sampler_blur3,uv).a)
+
 #define lum(x) (dot(x,float3(0.32,0.49,0.29)))
 #define tex2d tex2D
 #define tex3d tex3D
@@ -164,6 +178,135 @@ uniform float4x3 rot_rand4;
 // age: 0.0 = most recent frame, 1.0 = oldest available frame.
 // Returns float4 (rgba) — alpha is preset-controlled via video_alpha_mode/value/init.
 #define GetVideo(uv, age) tex3D(sampler_fw_video, float3(uv, frac(video_z_write - (age) * video_z_range + 1.0)))
+
+// Current incoming (downscaled) video frame, video-space — the frame being processed THIS pass.
+// Only meaningful inside a preset's video_ shader (the GPU preprocess combine pass): it pairs with
+// GetVideo(uv, age) above (the history of past frames). rgb = the live frame, a = the alpha the
+// preset's video_alpha_mode would have produced (the default the video_ shader can override).
+#define GetVideoIn(uv) (tex2D(sampler_video_in, uv).xyz)
 /*FLOATBUF*/ // Per-pixel state stored in the main buffer's alpha channel. Read with GetState(uv);
 /*FLOATBUF*/ // write by assigning to the "ret_a" variable in a warp or comp shader_body.
 #define GetState(uv) (tex2D(sampler_main, uv).a)
+
+// Mask/analysis buffer (MASK_LAYERS.md): a current-frame, video-space float4 sibling of the
+// video texture. R=seg (foreground/human matte), G=seg blur, B=motion, A=motion decay.
+#define GetMask(uv) (tex2D(sampler_fc_mask, uv))
+#define MaskSeg(uv) (tex2D(sampler_fc_mask, uv).r)
+#define MaskSegBlur(uv) (tex2D(sampler_fc_mask, uv).g)
+#define MaskMotion(uv) (tex2D(sampler_fc_mask, uv).b)
+#define MaskMotionDecay(uv) (tex2D(sampler_fc_mask, uv).a)
+
+// Curated color palettes (baked LUT, matches the per-frame palette_r/g/b eval functions).
+// pal = packed handle: integer part = family (0 Pastel,1 Muted,2 Jewel,3 Earth,4 Monochromatic,
+// 5 Neon,6 SaturatedPrimary), fractional part = knob in [0,1). t in [0,1] runs along the curve.
+#define Palette(pal, t) (tex3D(sampler_fc_palette, float3(saturate(t), frac(pal), (floor(pal) + 0.5) / 7.0)).rgb)
+// Gradient-map a color through a palette by its luminance (cheap duotone). This is a luminance
+// map; PaletteSnap/PalettePull below are the perceptual nearest-point versions.
+#define PaletteMap(pal, c) (Palette(pal, lum(c)))
+
+// Perceptual palette snap/pull. Both walk the palette curve (sampled from the LUT, so they work
+// for any handle with no per-palette bake; the knob animates free) and project a color onto it.
+// Distance AND (for pull) the blend happen in OKLab — the perceptually-uniform space the palettes
+// are defined in — so matching tracks how the eye sees color and the soft blend stays vivid
+// instead of desaturating toward gray. Samplers are always declared (see MilkdropShader); unused
+// helper functions are dead-stripped by the GLSL compiler.
+#define PALETTE_STEPS 24
+#define PALETTE_INVSTEP (1.0 / 23.0) /* 1/(PALETTE_STEPS-1); keep in sync */
+
+// Sample the palette curve in OKLab (L,a,b) — for matching, not display.
+#define PaletteLab(pal, t) (tex3D(sampler_fc_palette_lab, float3(saturate(t), frac(pal), (floor(pal) + 0.5) / 7.0)).rgb)
+
+// --- sRGB <-> OKLab (Bjorn Ottosson), matching ColorPalette.cpp. Gamma is piecewise but done
+//     branchlessly (step+lerp); pow() bases are guarded >= 0 for out-of-[0,1] feedback colors. ---
+float3 PaletteSrgbToLinear(float3 c)
+{
+    float3 lo = c / 12.92;
+    float3 hi = pow(max((c + 0.055) / 1.055, float3(0.0, 0.0, 0.0)), float3(2.4, 2.4, 2.4));
+    return lerp(lo, hi, step(float3(0.04045, 0.04045, 0.04045), c));
+}
+float3 PaletteLinearToSrgb(float3 c)
+{
+    c = saturate(c);
+    float3 lo = c * 12.92;
+    float3 hi = 1.055 * pow(c, float3(1.0 / 2.4, 1.0 / 2.4, 1.0 / 2.4)) - 0.055;
+    return lerp(lo, hi, step(float3(0.0031308, 0.0031308, 0.0031308), c));
+}
+float3 PaletteSrgbToLab(float3 srgb)
+{
+    float3 c = PaletteSrgbToLinear(srgb);
+    float l = dot(c, float3(0.4122214708, 0.5363325363, 0.0514459929));
+    float m = dot(c, float3(0.2119034982, 0.6806995451, 0.1073969566));
+    float s = dot(c, float3(0.0883024619, 0.2817188376, 0.6299787005));
+    float l_ = pow(max(l, 0.0), 1.0 / 3.0);
+    float m_ = pow(max(m, 0.0), 1.0 / 3.0);
+    float s_ = pow(max(s, 0.0), 1.0 / 3.0);
+    return float3(0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+                  1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+                  0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_);
+}
+float3 PaletteLabToSrgb(float3 lab)
+{
+    float l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+    float m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+    float s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+    float l = l_ * l_ * l_;
+    float m = m_ * m_ * m_;
+    float s = s_ * s_ * s_;
+    float3 lin = float3( 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+    return PaletteLinearToSrgb(lin);
+}
+
+// OKLab "distance", HUE-WEIGHTED: compare the chroma plane (a,b = hue+chroma) fully but lightness
+// (L) only weakly, so a color matches the palette entry of the same hue regardless of how
+// light/dark it is. PALETTE_LUMA_W = 1.0 = full perceptual (OKLab) distance; lower = more
+// hue-driven. Shared by BOTH snap and pull.
+#define PALETTE_LUMA_W 0.15
+float PaletteDistLab(float3 labA, float3 labB)
+{
+    float dL = labA.x - labB.x;
+    float2 dab = labA.yz - labB.yz;
+    return dot(dab, dab) + PALETTE_LUMA_W * dL * dL;
+}
+
+// Nearest point on the palette curve to OKLab color cLab. Returns (lab = on-curve, a = distance).
+float4 PaletteNearestLab(float pal, float3 cLab)
+{
+    float3 best = cLab;
+    float bestd = 100.0; // larger than any PaletteDistLab
+    for (int i = 0; i < PALETTE_STEPS; i++)
+    {
+        float3 pl = PaletteLab(pal, i * PALETTE_INVSTEP);
+        float d = PaletteDistLab(cLab, pl);
+        if (d < bestd) { bestd = d; best = pl; }
+    }
+    return float4(best, sqrt(bestd));
+}
+
+// Hard gradient-map: move c toward its nearest palette color by amount (0 = unchanged, 1 = on
+// curve). Matching + blend are perceptual (OKLab); result converted back to sRGB once.
+float3 PaletteSnap(float pal, float3 c, float amount)
+{
+    float3 cLab = PaletteSrgbToLab(c);
+    float3 nLab = PaletteNearestLab(pal, cLab).rgb;
+    return PaletteLabToSrgb(lerp(cLab, nLab, amount));
+}
+
+// Soft gradient-map: inverse-distance-weighted blend over the whole curve (no nearest-point pop),
+// blended in OKLab so it stays vivid. sigma is the OKLab falloff width (larger = smoother/duotone).
+float3 PalettePull(float pal, float3 c, float amount, float sigma)
+{
+    float3 cLab = PaletteSrgbToLab(c);
+    float3 num = float3(0.0, 0.0, 0.0);
+    float den = 0.0;
+    float inv = 1.0 / (2.0 * sigma * sigma);
+    for (int i = 0; i < PALETTE_STEPS; i++)
+    {
+        float3 pl = PaletteLab(pal, i * PALETTE_INVSTEP);
+        float w = exp(-PaletteDistLab(cLab, pl) * inv);
+        num += w * pl;
+        den += w;
+    }
+    return PaletteLabToSrgb(lerp(cLab, num / max(den, 1e-5), amount));
+}

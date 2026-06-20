@@ -3,10 +3,29 @@
 #include <Logging.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <iomanip>
+#include <sstream>
 #include <vector>
 
 namespace libprojectM {
 namespace Renderer {
+
+namespace {
+// Prefix each line of GLSL source with its line number, so the driver's
+// "ERROR: 0:NN" diagnostics can be mapped directly to a source line.
+auto NumberSourceLines(const std::string& source) -> std::string
+{
+    std::istringstream input(source);
+    std::ostringstream output;
+    std::string line;
+    int lineNumber = 1;
+    while (std::getline(input, line))
+    {
+        output << std::setw(4) << lineNumber++ << " | " << line << '\n';
+    }
+    return output.str();
+}
+} // anonymous namespace
 
 Shader::Shader()
     : m_shaderProgram(glCreateProgram())
@@ -213,7 +232,7 @@ GLuint Shader::CompileShader(const std::string& source, GLenum type)
 
     std::string compileError = "[Shader] Error compiling " + std::string(type == GL_VERTEX_SHADER ? "vertex" : "fragment") + " shader: " + std::string(message.data());
     LOG_ERROR(compileError);
-    LOG_DEBUG("[Shader] Failed source: " + source);
+    LOG_ERROR("[Shader] Failed source (line numbers match the driver's \"0:NN\" references):\n" + NumberSourceLines(source));
     throw ShaderException(compileError);
 }
 

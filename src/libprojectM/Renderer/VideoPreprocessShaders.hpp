@@ -289,5 +289,77 @@ void main()
 }
 )";
 
+// === Mask buffer (MASK_LAYERS.md). A 2D RGBA16F sibling of the video texture, computed
+// each frame in the preprocessing stage so it is current-frame and in video space. Channels:
+// R = seg (foreground matte = processed alpha), G = seg blur, B = motion, A = motion decay. ===
+
+//! Gather pass: writes seg into R, motion (frame-diff vs. the previous frame) into B, and motion
+//! decay into A. G (seg blur) is filled by the separate blur pass.
+//!
+//! seg is read from the INPUT frame's alpha (the app-supplied foreground matte), NOT the processed
+//! alpha -- so the mask buffer is independent of the preset's video_alpha_mode. (The processed
+//! alpha is whatever that mode computed: e.g. mode 3 = motion, which would make "seg" track motion.)
+//! The matte arrives in the library's pre-mirror space, so we mirror the sample to match the
+//! processed/previous frames (u_mirror).
+//!
+//! Motion decay reads its own previous value from last frame's mask buffer (u_prevMask) -- the blur
+//! pass writes the registered mask AFTER this gather, so during gather it still holds the prior
+//! frame (no separate ping-pong). decayed = max(motion, prevDecay * u_decay): motion lingers/fades.
+static constexpr const char* const kVideoMaskGatherFragmentShader = R"(
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_input;       //!< Uploaded frame: rgb + app-supplied foreground matte in alpha.
+uniform sampler2D u_prev;        //!< Previous processed frame (rgb) for the motion frame-diff.
+uniform sampler2D u_prevMask;    //!< Last frame's mask buffer (a = previous motion-decay value).
+uniform int   u_hasPrev;         //!< 0 on the first frame (no previous frame yet).
+uniform int   u_mirror;          //!< Non-zero to mirror the input sample (library-owned mirror).
+uniform float u_motionScale;     //!< Gain applied to the raw frame-diff magnitude.
+uniform float u_decay;           //!< Motion-decay persistence (0..1): higher = longer trails.
+layout(location = 0) out vec4 o_mask;
+float chebyshev(vec3 a, vec3 b) { vec3 d = abs(a - b); return max(max(d.r, d.g), d.b); }
+void main()
+{
+    vec2 muv = (u_mirror != 0) ? vec2(1.0 - v_uv.x, v_uv.y) : v_uv;
+    vec4 inp = texture(u_input, muv);
+    float seg = inp.a; // foreground matte, independent of the preset's video_alpha_mode
+    float motion = 0.0;
+    float decayed = 0.0;
+    if (u_hasPrev == 1)
+    {
+        vec3 pr = texture(u_prev, v_uv).rgb;
+        motion = clamp(chebyshev(inp.rgb, pr) * u_motionScale, 0.0, 1.0);
+        float prevDecay = texture(u_prevMask, v_uv).a;
+        decayed = max(motion, prevDecay * clamp(u_decay, 0.0, 1.0));
+    }
+    o_mask = vec4(seg, 0.0, motion, decayed);
+}
+)";
+
+//! Seg-blur pass: a single-pass gaussian of the seg channel (R) written into G; R/B/A pass
+//! through. This is a DEDICATED current-frame blur (not GetBlurA#, which is feedback-space and
+//! one frame stale). Cheap at the mask buffer's low resolution.
+static constexpr const char* const kVideoMaskBlurFragmentShader = R"(
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_mask;
+uniform vec2  u_texel; //!< 1.0 / mask size.
+layout(location = 0) out vec4 o_mask;
+void main()
+{
+    vec4 c = texture(u_mask, v_uv);
+    float sum = 0.0;
+    float wsum = 0.0;
+    const int R = 4;
+    for (int dy = -R; dy <= R; ++dy)
+    for (int dx = -R; dx <= R; ++dx)
+    {
+        float w = exp(-float(dx * dx + dy * dy) / (2.0 * float(R * R)));
+        sum += w * texture(u_mask, v_uv + vec2(float(dx), float(dy)) * u_texel).r;
+        wsum += w;
+    }
+    o_mask = vec4(c.r, sum / wsum, c.b, c.a);
+}
+)";
+
 } // namespace Renderer
 } // namespace libprojectM

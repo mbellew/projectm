@@ -1,0 +1,27 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+fDecay=0
+warp=0.000000
+wave_a=0
+fWaveAlpha=0
+
+// Beat-tracker test. beat_phase (0..2pi) sweeps a vertical bar left->right; beat_onset (1 on a beat)
+// flashes the whole frame. If locked to the music, the bar resets exactly on each flash, in time.
+// Needs audio (e.g. music routed to the capture device). beat_bpm is carried in q3 for reference.
+per_frame_1=q1 = beat_phase / 6.2831853;
+per_frame_2=q2 = beat_onset;
+per_frame_3=q3 = beat_bpm;
+per_frame_4=q4 = beat_conf;
+
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float sweep = q1;                   // beat phase, normalized 0..1
+comp_4=`    float bar = saturate(1.0 - abs(uv.x - sweep) * 40.0);
+comp_5=`    float flash = q2 * 0.6;             // whole-frame flash on a beat
+comp_6=`    float conf = q4;                    // dim the field when unlocked
+comp_7=`    float3 bg = float3(0.0, 0.04, 0.10) * (0.3 + 0.7*conf);
+comp_8=`    ret = bg + float3(bar, bar*0.7, 0.2) + flash;
+comp_9=`}

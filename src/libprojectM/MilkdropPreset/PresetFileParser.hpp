@@ -14,6 +14,12 @@ namespace MilkdropPreset {
  *
  * Values and code blocks can easily be accessed via the helper functions. It is also possible to access the parsed
  * map contents directly if required.
+ *
+ * As a convenience extension, a value consisting solely of three backticks (```) opens a multi-line "fenced" block:
+ * every following line, verbatim, becomes the key's value until a line containing only ``` closes it. This lets an
+ * entire section be written as one block (e.g. `comp_1=```` ... ````, or a whole `per_frame_1=```` ... ````)
+ * instead of numbered, backtick-prefixed lines. The block is stored under the given key, so it must use the same
+ * `_1` index that GetCode() starts scanning from.
  */
 class PresetFileParser
 {
@@ -126,7 +132,17 @@ private:
      */
     static auto ToLower(std::string str) -> std::string;
 
+    /**
+     * @brief Returns true if the line is exactly three backticks (```), ignoring trailing whitespace.
+     * Used to open and close multi-line fenced value blocks.
+     */
+    static auto IsFenceMarker(const std::string& line) -> bool;
+
     ValueMap m_presetValues; //!< Map with preset keys and their value.
+
+    bool m_inFence{false};   //!< True while accumulating a ``` fenced multi-line value.
+    std::string m_fenceKey;  //!< Key the current fenced block will be stored under.
+    std::string m_fenceBody; //!< Accumulated verbatim lines of the current fenced block.
 };
 
 } // namespace MilkdropPreset

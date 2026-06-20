@@ -1,0 +1,32 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+fDecay=0
+warp=0.000000
+wave_a=0
+fWaveAlpha=1.0
+
+per_frame_1=// Chroma key (video_alpha_mode=4). Removes pixels near the key color.
+per_frame_2=// The key color is supplied by the APPLICATION (projectm_video_set_chroma_key),
+per_frame_3=// not the preset, and defaults to black. To key a green screen, run with
+per_frame_4=// PROJECTM_VIDEO_CHROMA_KEY="0,1,0". video_alpha_value is the tolerance (0=exact).
+per_frame_5=video_alpha_mode = 0;
+per_frame_6=video_alpha_value = 1.0;
+per_frame_7=video_alpha_init = 0.0;
+
+warp_1=`shader_body
+warp_2=`{
+warp_3=`    float v = saturate(GetVideo(uv,0.0).a);
+warp_4=`    ret = float3(0.4,0,0);
+warp_5=`    ret_a = v;
+warp_6=`}
+
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float blur_a = GetBlurA1(uv);
+comp_4=`    float diff = saturate(GetVideo(uv, 0.0).a) - saturate(blur_a);
+comp_5=`    ret = float3(diff,diff,diff);
+comp_6=`    //ret = float3(blur_a,blur_a,blur_a); // diff * tex2D(sampler_main, uv);
+comp_7=`}

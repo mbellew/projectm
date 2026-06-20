@@ -8,12 +8,12 @@ fDecay=0
 warp=0.000000
 wave_a=0
 
-per_frame_1=video_alpha_mode = 3;
+per_frame_1=video_alpha_mode = 0;
 per_frame_2=video_alpha_value = 4.0;
 per_frame_3=video_alpha_decay = 0.90;
 per_frame_4=video_alpha_init = 0.0;
 
-// Display current video frame. Screen is transparent black if no video is submitted.
+// Display current video frame alpha as grayscale
 comp_1=`shader_body
 comp_2=`{
 comp_3=`    float4 vid = GetVideo(uv, 0.0);

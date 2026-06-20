@@ -1,0 +1,18 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+fDecay=0
+warp=0.000000
+wave_a=0
+fWaveAlpha=0
+
+// Palette LUT demo: 7 horizontal bands, one per family (0 Pastel .. 6 SaturatedPrimary),
+// each swept across t = uv.x. Knob fixed at 0.7. Proves Palette() samples the baked 3D LUT.
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float family = floor(uv.y * 7.0);   // 0..6 top-to-bottom
+comp_4=`    float pal = family + 0.7;            // packed handle: family + knob(0.7)
+comp_5=`    ret = Palette(pal, uv.x);
+comp_6=`}

@@ -239,6 +239,12 @@ void MilkdropShader::LoadVariables(const PresetState& presetState, const PerFram
     m_shader.SetUniformFloat("video_z_write", presetState.renderContext.videoZWrite);
     m_shader.SetUniformFloat("video_z_range", presetState.renderContext.videoZRange);
     m_shader.SetUniformFloat("video_frame_count", presetState.renderContext.videoFrameCount);
+    m_shader.SetUniformFloat("video_buffer_seconds", presetState.renderContext.videoBufferSeconds);
+
+    m_shader.SetUniformFloat("beat_phase", presetState.audioData.beatPhase);
+    m_shader.SetUniformFloat("beat_onset", presetState.audioData.beatOnset);
+    m_shader.SetUniformFloat("beat_bpm", presetState.audioData.bpm);
+    m_shader.SetUniformFloat("beat_conf", presetState.audioData.beatConf);
 
 
     std::array<glm::mat4, 24> tempMatrices{};
@@ -340,6 +346,10 @@ void MilkdropShader::PreprocessPresetShader(std::string& program)
     {
         shaderTypeString = "warp";
     }
+    else if (m_type == ShaderType::VideoShader)
+    {
+        shaderTypeString = "video";
+    }
 
     if (program.length() <= 0)
     {
@@ -392,6 +402,15 @@ void PS(float4 _vDiffuse : COLOR,
         out float4 _mv_tex_coords : COLOR1)
 )");
         }
+        else if (m_type == ShaderType::VideoShader)
+        {
+            // Fullscreen pass: only the texture coordinate is interpolated (no per-pixel mesh,
+            // so no rad/ang, no hue diffuse). Single output -> the processed video frame.
+            program.replace(int(found), 11, R"(
+void PS(float2 _uv : TEXCOORD0,
+        out float4 _return_value : COLOR)
+)");
+        }
         else
         {
             program.replace(int(found), 11, R"(
@@ -419,6 +438,15 @@ void PS(float4 _vDiffuse : COLOR,
             /*FLOATBUF*/ // Expose the alpha channel as a writable per-pixel state ("ret_a"). Default
             /*FLOATBUF*/ // to the warped feedback alpha so untouched presets carry state with the pixels.
             progMain.append("float ret_a = tex2D(sampler_main, _uv.xy).a;\n");
+        }
+        else if (m_type == ShaderType::VideoShader)
+        {
+            // Default to passing the live frame through unchanged: rgb from the incoming frame and
+            // ret_a = the alpha the preset's video_alpha_mode already computed (carried in the
+            // input's alpha). A video_ shader overrides ret_a (and optionally ret) to author what
+            // goes into the history.
+            progMain = "{\nfloat3 ret = GetVideoIn(uv);\n";
+            progMain.append("float ret_a = tex2D(sampler_video_in, uv).a;\n");
         }
         else
         {
@@ -506,6 +534,12 @@ void PS(float4 _vDiffuse : COLOR,
                           "#define ang _rad_ang.y\n"
                           "#define uv _uv.xy\n"
                           "#define uv_orig _uv.zw\n");
+    }
+    else if (m_type == ShaderType::VideoShader)
+    {
+        // No per-pixel mesh: only uv is meaningful (rad/ang/hue come from the warp/comp mesh).
+        fullSource.append("#define uv _uv\n"
+                          "#define uv_orig _uv\n");
     }
     else
     {
@@ -595,15 +629,19 @@ void MilkdropShader::GetReferencedSamplers(const std::string& program)
         }
     }
 
-    if (stripped.find("GetBlur3") != std::string::npos)
+    // GetBlur#() reads the blurred color, GetBlurA#() the blurred alpha. Both expand to
+    // tex2D(sampler_blurN, ...) during preprocessing (after this scan), so either form must
+    // trigger declaration of the matching blur sampler. "GetBlur3" is a substring of neither
+    // "GetBlurA3" nor the lower levels, so the alpha variants must be matched explicitly.
+    if (stripped.find("GetBlur3") != std::string::npos || stripped.find("GetBlurA3") != std::string::npos)
     {
         UpdateMaxBlurLevel(BlurTexture::BlurLevel::Blur3);
     }
-    else if (stripped.find("GetBlur2") != std::string::npos)
+    else if (stripped.find("GetBlur2") != std::string::npos || stripped.find("GetBlurA2") != std::string::npos)
     {
         UpdateMaxBlurLevel(BlurTexture::BlurLevel::Blur2);
     }
-    else if (stripped.find("GetBlur1") != std::string::npos)
+    else if (stripped.find("GetBlur1") != std::string::npos || stripped.find("GetBlurA1") != std::string::npos)
     {
         UpdateMaxBlurLevel(BlurTexture::BlurLevel::Blur1);
     }
@@ -619,6 +657,22 @@ void MilkdropShader::GetReferencedSamplers(const std::string& program)
     {
         m_samplerNames.insert("fw_video");
     }
+
+    // The mask buffer accessors (GetMask / MaskSeg / MaskSegBlur / MaskMotion / MaskMotionDecay)
+    // all expand to tex2D(sampler_fc_mask, ...) during HLSL preprocessing, after this scan. Any
+    // reference to "Mask" must therefore declare the mask sampler. See MASK_LAYERS.md.
+    if (stripped.find("Mask") != std::string::npos)
+    {
+        m_samplerNames.insert("fc_mask");
+    }
+
+    // The palette LUT samplers are ALWAYS declared: the header defines PaletteSnap/PalettePull as
+    // helper functions (a loop can't live in a #define), and those reference sampler_fc_palette
+    // (sRGB LUT) and sampler_fc_palette_lab (OKLab LUT for perceptual distance/blend)
+    // unconditionally, so both must always exist even when a preset uses no palette (the LUTs are
+    // always registered; unused functions are dead-stripped by the GLSL compiler). See ColorPalette.
+    m_samplerNames.insert("fc_palette");
+    m_samplerNames.insert("fc_palette_lab");
 }
 
 void MilkdropShader::TranspileHLSLShader(const PresetState& presetState, std::string& program)
@@ -720,6 +774,71 @@ void MilkdropShader::TranspileHLSLShader(const PresetState& presetState, std::st
     {
         m_shader.CompileProgram(MilkdropStaticShaders::Get()->GetPresetCompVertexShader(), generator.GetResult());
     }
+}
+
+void MilkdropShader::CompileVideoShader()
+{
+    TranspileVideoShader(m_preprocessedCode);
+}
+
+void MilkdropShader::TranspileVideoShader(std::string& program)
+{
+    M4::GLSLGenerator generator;
+    M4::Allocator allocator;
+
+    M4::HLSLTree tree(&allocator);
+    M4::HLSLParser parser(&allocator, &tree);
+
+    // Preprocess define macros
+    std::string sourcePreprocessed;
+    if (!parser.ApplyPreprocessor("", program.c_str(), program.size(), sourcePreprocessed))
+    {
+        LOG_DEBUG("[MilkdropShader] Failed video shader code:\n" + program);
+        throw Renderer::ShaderException("Error translating HLSL video shader: Preprocessing failed.");
+    }
+
+    // Strip any sampler / texsize declarations the author left in the body; the preprocess pass
+    // owns its textures and we declare them ourselves below.
+    std::smatch matches;
+    while (std::regex_search(sourcePreprocessed, matches, std::regex("sampler(2D|3D|)(\\s+|\\().*")))
+    {
+        sourcePreprocessed.replace(matches.position(), matches.length(), "");
+    }
+    while (std::regex_search(sourcePreprocessed, matches, std::regex("float4\\s+texsize_.*")))
+    {
+        sourcePreprocessed.replace(matches.position(), matches.length(), "");
+    }
+
+    // Fixed set of preprocess-owned samplers (no TextureManager descriptors): the live frame, the
+    // mask buffer and the history. The palette LUTs are always declared because the shared header's
+    // PaletteSnap/PalettePull helpers reference them unconditionally; unused samplers (and those
+    // helpers) are dead-stripped by the GLSL compiler.
+    sourcePreprocessed.insert(0,
+        "uniform sampler2D sampler_video_in;\n"
+        "uniform sampler2D sampler_fc_mask;\n"
+        "uniform sampler3D sampler_fw_video;\n"
+        "uniform sampler3D sampler_fc_palette;\n"
+        "uniform sampler3D sampler_fc_palette_lab;\n");
+
+    if (!parser.Parse("", sourcePreprocessed.c_str(), sourcePreprocessed.size()))
+    {
+        LOG_DEBUG("[MilkdropShader] Failed video shader code:\n" + program);
+        LOG_DEBUG("[MilkdropShader] Failed preprocessed video shader code:\n" + sourcePreprocessed);
+        throw Renderer::ShaderException("[MilkdropShader] Error translating HLSL video shader: HLSL parsing failed.");
+    }
+
+    if (!generator.Generate(&tree, M4::GLSLGenerator::Target_FragmentShader,
+                            MilkdropStaticShaders::Get()->GetGlslGeneratorVersion(),
+                            "PS", M4::GLSLGenerator::Options(M4::GLSLGenerator::Flag_AlternateNanPropagation)))
+    {
+        LOG_DEBUG("[MilkdropShader] Failed video shader code:\n" + program);
+        LOG_DEBUG("[MilkdropShader] Failed preprocessed video shader code:\n" + sourcePreprocessed);
+        throw Renderer::ShaderException("[MilkdropShader] Error translating HLSL video shader: GLSL generating failed.\nSource:\n" + sourcePreprocessed);
+    }
+
+    LOG_TRACE("[MilkdropShader] Transpiled GLSL video shader code:\n" + std::string(generator.GetResult()));
+
+    m_shader.CompileProgram(MilkdropStaticShaders::Get()->GetPresetVideoVertexShader(), generator.GetResult());
 }
 
 void MilkdropShader::UpdateMaxBlurLevel(BlurTexture::BlurLevel requestedLevel)

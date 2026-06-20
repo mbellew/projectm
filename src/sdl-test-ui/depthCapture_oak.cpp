@@ -248,6 +248,10 @@ bool DepthCapture::Start(FrameCallback callback, int width, int height)
         stereo->setLeftRightCheck(false);
         stereo->setSubpixel(false);
         stereo->setExtendedDisparity(false);
+        // Smallest pool that still keeps the stereo engine fed. The default pool
+        // is larger and adds buffering jitter; with seq-num pairing we want each
+        // produced depth frame consumed promptly, not queued.
+        stereo->setNumFramesPool(2);
         // Post-processing: kill speckles, fill small holes, stabilize over time
         // so the prior isn't noisy. Values from the reference.
         auto cfg = stereo->initialConfig.get();
@@ -279,6 +283,10 @@ bool DepthCapture::Start(FrameCallback callback, int width, int height)
         stereo->depth.link(xoutDepth->input);
 
         m_impl->device = std::make_unique<dai::Device>(pipeline);
+        // 0 disables XLink chunking: the depth uint16 stream is ~2x the bytes
+        // of YUV color, and the default chunk size adds noticeable per-frame
+        // USB transfer latency. Send each frame as one transfer instead.
+        m_impl->device->setXLinkChunkSize(0);
     }
     catch (const std::exception& e)
     {
@@ -302,6 +310,30 @@ bool DepthCapture::Start(FrameCallback callback, int width, int height)
             // Blocking get; on shutdown the queue is closed and get() returns null.
             auto colorFrame = qRgb->get<dai::ImgFrame>();
             auto depthFrame = qDepth->get<dai::ImgFrame>();
+            if (!m_impl->running || !colorFrame || !depthFrame)
+            {
+                continue;
+            }
+
+            // Pair color+depth by sensor sequence number. The stereo path has more
+            // pipeline stages than the RGB ISP (rectify -> match -> post-filter ->
+            // resize), so depth frames arrive 2-3 frames behind the RGB frame they
+            // correspond to. Without this matching, qRgb yields the current frame
+            // while qDepth yields a depth computed for an older exposure, and the
+            // mask visibly trails motion. Advance whichever stream is ahead until
+            // both frames came from the same sensor capture.
+            while (m_impl->running && colorFrame && depthFrame &&
+                   colorFrame->getSequenceNum() != depthFrame->getSequenceNum())
+            {
+                if (colorFrame->getSequenceNum() < depthFrame->getSequenceNum())
+                {
+                    colorFrame = qRgb->get<dai::ImgFrame>();
+                }
+                else
+                {
+                    depthFrame = qDepth->get<dai::ImgFrame>();
+                }
+            }
             if (!m_impl->running || !colorFrame || !depthFrame)
             {
                 continue;

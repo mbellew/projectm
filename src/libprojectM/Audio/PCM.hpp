@@ -8,6 +8,7 @@
 #pragma once
 
 #include "Audio/AudioConstants.hpp"
+#include "Audio/BeatDetect.hpp"
 #include "Audio/FrameAudioData.hpp"
 #include "Audio/Loudness.hpp"
 #include "Audio/MilkdropFFT.hpp"
@@ -114,6 +115,8 @@ private:
     Loudness m_bass{Loudness::Band::Bass};       //!< Beat detection/volume for the "bass" band.
     Loudness m_middles{Loudness::Band::Middles}; //!< Beat detection/volume for the "middles" band.
     Loudness m_treble{Loudness::Band::Treble};   //!< Beat detection/volume for the "treble" band.
+
+    BeatDetect m_beatDetect; //!< Phase-locked beat tracker (beat_phase / beat onset).
 };
 
 } // namespace Audio

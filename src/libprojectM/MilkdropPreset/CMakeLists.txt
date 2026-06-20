@@ -5,6 +5,7 @@ set(SHADER_FILES
         Shaders/PresetCompVertexShaderGlsl330.vert
         Shaders/PresetMotionVectorsVertexShaderGlsl330.vert
         Shaders/PresetShaderHeaderGlsl330.inc
+        Shaders/PresetVideoVertexShaderGlsl330.vert
         Shaders/PresetWarpFragmentShaderGlsl330.frag
         Shaders/PresetWarpVertexShaderGlsl330.vert
         Shaders/TexturedDrawFragmentShaderGlsl330.frag

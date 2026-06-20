@@ -52,6 +52,11 @@ auto VideoTexture::GetTexture() const -> const std::shared_ptr<Texture>&
     return m_texture;
 }
 
+auto VideoTexture::GetMaskTexture() const -> const std::shared_ptr<Texture>&
+{
+    return m_maskTexture;
+}
+
 void VideoTexture::SubmitFrame(const void* data, int srcWidth, int srcHeight, PixelFormat format)
 {
     if (data == nullptr || srcWidth <= 0 || srcHeight <= 0)
@@ -73,7 +78,7 @@ void VideoTexture::SubmitFrameGPU()
     m_pendingFrameIsGpu = true;
 }
 
-void VideoTexture::UpdateGPU(const AlphaParams& params)
+void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
 {
     bool gpuFrame = false;
     {
@@ -89,6 +94,21 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
         }
         m_hasPendingFrame = false;
     }
+
+    // Measure the wall-clock cadence of actual slice advances. Frames are submitted at the
+    // source rate, which may differ from the render rate, so this EMA of seconds-per-slice is
+    // what lets a preset convert a wall-clock duration (e.g. one beat) into a buffer age.
+    const auto now = std::chrono::steady_clock::now();
+    if (m_hasLastAdvance)
+    {
+        const double dt = std::chrono::duration<double>(now - m_lastAdvanceTime).count();
+        if (dt > 1e-4 && dt < 10.0)
+        {
+            m_secondsPerSlice = (m_secondsPerSlice <= 0.0) ? dt : m_secondsPerSlice * 0.9 + dt * 0.1;
+        }
+    }
+    m_lastAdvanceTime = now;
+    m_hasLastAdvance = true;
 
     if (!gpuFrame)
     {
@@ -194,7 +214,48 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
 
     uint32_t finalTex = m_prevTex[writeIdx]; // prior output, unless replaced by a refinement below
 
-    if (refine)
+    if (alphaShader != nullptr)
+    {
+        // --- Preset-authored combine pass. The video_ shader computes the alpha (and optionally
+        // rgb) written into the history. Run the mask buffer FIRST so the shader can read
+        // MaskSeg/MaskMotion/... of the CURRENT frame, then combine. The fixed-mode refinement and
+        // cleanup are bypassed (the preset owns the alpha). ---
+        RunMaskBuffer(readIdx);
+
+        glDrawBuffers(1, singleBuffer);
+        glBindVertexArray(m_vao);
+        alphaShader->Bind();
+
+        // History z mapping for GetVideo: this frame's slice is not written yet, so the most recent
+        // VALID frame is the previous slice. Point video_z_write at it; video_z_range still reflects
+        // the frames filled so far (m_frameCount is incremented at the end of this call).
+        const int prevIndex = (m_writeIndex - 1 + m_depth) % m_depth;
+        alphaShader->SetUniformFloat("video_z_write", (static_cast<float>(prevIndex) + 0.5f) / static_cast<float>(m_depth));
+        alphaShader->SetUniformFloat("video_z_range", NormalizedRange());
+
+        // The live frame comes from prev[writeIdx]: the preprocess pass already mirrored it and
+        // carried the alpha-mode result in its alpha (the video_ shader's default ret_a), so
+        // GetVideoIn stays aligned with the mirrored mask buffer.
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_prevTex[writeIdx]);
+        alphaShader->SetUniformInt("sampler_video_in", 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_maskTexture->TextureID());
+        alphaShader->SetUniformInt("sampler_fc_mask", 1);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_3D, m_texture->TextureID());
+        alphaShader->SetUniformInt("sampler_fw_video", 2);
+
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_morphTex[0], 0);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        // Release the history from unit 2 before the slice copy rebinds it as the copy target.
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_3D, 0);
+        glBindVertexArray(0);
+        finalTex = m_morphTex[0];
+    }
+    else if (refine)
     {
         // --- Shared refinement back-end (see VIDEO_MASKING_PIPELINE.md):
         //     B1 guided fill -> B2 matte -> B3 temporal -> B4 feather. ---
@@ -292,6 +353,14 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
     glCopyTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, m_writeIndex, 0, 0, m_texWidth, m_texHeight);
     glBindTexture(GL_TEXTURE_3D, 0);
 
+    // Mask buffer: in the fixed path it is derived here (after the slice copy) for the NEXT frame's
+    // warp/comp GetMask. With a combine shader it was already derived above (before the combine, so
+    // the shader could read the current frame's MaskSeg/MaskMotion).
+    if (alphaShader == nullptr)
+    {
+        RunMaskBuffer(readIdx);
+    }
+
     // Restore state.
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -310,6 +379,56 @@ void VideoTexture::UpdateGPU(const AlphaParams& params)
         m_hasBackground = true;
     }
     ++m_frameCount;
+}
+
+void VideoTexture::RunMaskBuffer(int readIdx)
+{
+    // --- Mask buffer (MASK_LAYERS.md): derive seg/seg-blur/motion into m_maskTexture. The
+    // gather pass composes (seg, 0, motion, 0) into a scratch surface (morph[1], free here),
+    // then the blur pass fills G and copies the result into the registered mask texture.
+    // Assumes m_fbo is bound, the viewport is the texture size and samplers are cleared. ---
+    const GLenum singleBuffer[1] = {GL_COLOR_ATTACHMENT0};
+    const glm::vec2 texel{1.0f / static_cast<float>(m_texWidth), 1.0f / static_cast<float>(m_texHeight)};
+
+    glDrawBuffers(1, singleBuffer);
+    glBindVertexArray(m_vao);
+
+    m_maskGatherShader->Bind();
+    m_maskGatherShader->SetUniformInt("u_hasPrev", m_hasPreviousFrame ? 1 : 0);
+    m_maskGatherShader->SetUniformInt("u_mirror", m_mirror ? 1 : 0);
+    m_maskGatherShader->SetUniformFloat("u_motionScale", 4.0f);
+    m_maskGatherShader->SetUniformFloat("u_decay", 0.9f);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_morphTex[1], 0);
+    // seg comes from the INPUT matte (app-supplied alpha), so the mask buffer is independent of the
+    // preset's video_alpha_mode; rgb from the same input drives the motion diff vs. the prev frame.
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_inputTex);
+    m_maskGatherShader->SetUniformInt("u_input", 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_prevTex[readIdx]);
+    m_maskGatherShader->SetUniformInt("u_prev", 1);
+    // Motion-decay reads last frame's mask (the registered texture still holds it; the blur pass
+    // below overwrites it only afterward, so this is a safe self-read, not a feedback loop).
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, m_maskTexture->TextureID());
+    m_maskGatherShader->SetUniformInt("u_prevMask", 2);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // Unbind the mask from unit 2 before it becomes the render target, so it's never both an
+    // FBO attachment and a bound texture (avoids the Apple GL feedback-loop warning).
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    m_maskBlurShader->Bind();
+    m_maskBlurShader->SetUniformFloat2("u_texel", texel);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_maskTexture->TextureID(), 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_morphTex[1]);
+    m_maskBlurShader->SetUniformInt("u_mask", 0);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+
+    // Detach the mask texture so it isn't left as a live FBO attachment.
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 }
 
 void VideoTexture::SetChromaKey(float r, float g, float b)
@@ -409,6 +528,26 @@ void VideoTexture::CreateGpuResources()
     m_featherShader = std::make_unique<Shader>();
     m_featherShader->CompileProgram(header + kVideoPreprocessVertexShader,
                                     header + kVideoFeatherFragmentShader);
+    m_maskGatherShader = std::make_unique<Shader>();
+    m_maskGatherShader->CompileProgram(header + kVideoPreprocessVertexShader,
+                                       header + kVideoMaskGatherFragmentShader);
+    m_maskBlurShader = std::make_unique<Shader>();
+    m_maskBlurShader->CompileProgram(header + kVideoPreprocessVertexShader,
+                                     header + kVideoMaskBlurFragmentShader);
+
+    // Mask buffer: 2D RGBA16F sibling of the video texture, sampled by presets as "mask".
+    // Same resolution as the processing surfaces (already a downscale of the source).
+    m_maskTexture = std::make_shared<Texture>("mask", GL_TEXTURE_2D,
+                                              m_texWidth, m_texHeight, 0,
+                                              GL_RGBA16F, GL_RGBA, GL_FLOAT, false);
+    // Non-mipmap filtering so the gather pass's raw self-read (motion-decay) is texture-complete.
+    // Preset sampling overrides these via the TextureManager "fc_" sampler object regardless.
+    glBindTexture(GL_TEXTURE_2D, m_maskTexture->TextureID());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     // Input texture: the uploaded downscaled camera frame (RGBA8).
     glGenTextures(1, &m_inputTex);
@@ -472,6 +611,17 @@ float VideoTexture::NormalizedRange() const
     const uint32_t filled = std::min<uint32_t>(m_frameCount - 1,
                                                static_cast<uint32_t>(m_depth - 1));
     return static_cast<float>(filled) / static_cast<float>(m_depth);
+}
+
+float VideoTexture::BufferSeconds() const
+{
+    if (m_frameCount <= 1 || m_secondsPerSlice <= 0.0)
+    {
+        return 0.0f;
+    }
+    const uint32_t filled = std::min<uint32_t>(m_frameCount - 1,
+                                               static_cast<uint32_t>(m_depth - 1));
+    return static_cast<float>(static_cast<double>(filled) * m_secondsPerSlice);
 }
 
 } // namespace Renderer

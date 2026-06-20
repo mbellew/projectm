@@ -28,6 +28,11 @@ public:
     float vol{0.f};
     float volAtt{0.f};
 
+    float beatPhase{0.f}; //!< Phase-locked beat phase, 0 .. 2*pi (0 = on the beat).
+    float beatOnset{0.f}; //!< 1.0 on frames where a beat landed, else 0.0.
+    float bpm{0.f};       //!< Estimated tempo in BPM (0 until the tracker locks).
+    float beatConf{0.f};  //!< Beat-tracker confidence, 0 .. 1.
+
     std::array<float, WaveformSamples> waveformLeft;
     std::array<float, WaveformSamples> waveformRight;
 

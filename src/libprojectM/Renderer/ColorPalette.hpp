@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <vector>
+
 namespace libprojectM {
 namespace Renderer {
 
@@ -25,6 +28,14 @@ public:
     {
         float r{};
         float g{};
+        float b{};
+    };
+
+    /** @brief An OKLab color (perceptually uniform): L in [0,1], a/b roughly in [-0.4,0.4]. */
+    struct Lab
+    {
+        float L{};
+        float a{};
         float b{};
     };
 
@@ -68,6 +79,48 @@ public:
 
     /** @brief Convenience: samples a color directly from a packed handle. */
     static auto ColorAt(float handle, float t) -> Rgb;
+
+    /**
+     * @brief Samples the palette color in OKLab (the space the curves are defined in).
+     * Same point as ColorAt(), but returned as (L,a,b) without the sRGB conversion — used to
+     * build the perceptual-distance LUT for shader snap/pull.
+     */
+    static auto ColorAtLab(Family family, float knob, float t) -> Lab;
+
+    /** @brief A baked palette volume, ready to upload to a GL_TEXTURE_3D. */
+    struct Lut
+    {
+        std::vector<uint8_t> rgba; //!< Tightly packed RGBA8, ordered [family][knob][t].
+        int width{};               //!< t axis (texels).
+        int height{};              //!< knob axis (texels).
+        int depth{};               //!< family axis (= Family::Count).
+    };
+
+    /**
+     * @brief Bakes every family into one RGBA8 volume for GPU sampling.
+     *
+     * Axis layout matches the shader sampler: x = @c t in [0,1], y = @c knob in [0,1],
+     * z = family slice. Texels are sampled at their centers ((i+0.5)/size), so a shader
+     * sampling at (t, knob, (family+0.5)/depth) with linear filtering reproduces ColorAt().
+     * @param tSize    Resolution along t (e.g. 256).
+     * @param knobSize Resolution along knob (e.g. 32).
+     */
+    static auto BakeLut(int tSize, int knobSize) -> Lut;
+
+    /** @brief A baked OKLab palette volume, ready to upload to an RGBA16F GL_TEXTURE_3D. */
+    struct LabLut
+    {
+        std::vector<float> data; //!< 4 floats per texel (L, a, b, 0), ordered [family][knob][t].
+        int width{};
+        int height{};
+        int depth{};
+    };
+
+    /**
+     * @brief Bakes every family into one OKLab (L,a,b) volume for perceptual shader matching.
+     * Same axis layout / center convention as BakeLut(); used by snap/pull's distance + blend.
+     */
+    static auto BakeLutLab(int tSize, int knobSize) -> LabLut;
 };
 
 } // namespace Renderer

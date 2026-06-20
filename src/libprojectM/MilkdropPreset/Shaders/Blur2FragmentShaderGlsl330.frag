@@ -28,22 +28,22 @@ void main(){
     // size of blur1_ps)
     vec2 uv2 = fragment_texture.xy + srctexsize.zw*vec2(0,0);
 
-    vec3 blur =
-    (texture(texture_sampler, uv2 + vec2(0, d1 * srctexsize.w)).xyz +
-    texture(texture_sampler, uv2 + vec2(0, -d1 * srctexsize.w)).xyz) *
+    // Blur all four channels (RGB + alpha) in one pass.
+    vec4 blur =
+    (texture(texture_sampler, uv2 + vec2(0, d1 * srctexsize.w)) +
+    texture(texture_sampler, uv2 + vec2(0, -d1 * srctexsize.w))) *
     w1 +
-    (texture(texture_sampler, uv2 + vec2(0, d2 * srctexsize.w)).xyz +
-    texture(texture_sampler, uv2 + vec2(0, -d2 * srctexsize.w)).xyz) *
+    (texture(texture_sampler, uv2 + vec2(0, d2 * srctexsize.w)) +
+    texture(texture_sampler, uv2 + vec2(0, -d2 * srctexsize.w))) *
     w2;
-    blur.xyz *= w_div;
+    blur *= w_div;
 
     // tone it down at the edges (only happens on 1st X pass!)
     float t = min(min(fragment_texture.x, fragment_texture.y),
     1.0 - max(fragment_texture.x, fragment_texture.y));
     t = sqrt(t);
     t = edge_darken_c1 + edge_darken_c2 * clamp(t * edge_darken_c3, 0.0, 1.0);
-    blur.xyz *= t;
-
-    color.xyz = blur;
-    color.w = 1.0;
+    // Edge-darken color only; keep alpha as the plain blurred value.
+    color.xyz = blur.xyz * t;
+    color.w = blur.w;
 }

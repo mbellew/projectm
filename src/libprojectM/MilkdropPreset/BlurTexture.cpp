@@ -370,7 +370,10 @@ void BlurTexture::AllocateTextures(const Renderer::Texture& sourceTexture)
         }
 
         // This will automatically replace any old texture.
-        m_blurTextures[i] = std::make_shared<Renderer::Texture>(textureName, width2, height2, false);
+        // RGBA (not RGB) so the per-pixel alpha/state channel is blurred and stored alongside
+        // the color channels; read it back via GetBlurA#() in preset shaders.
+        m_blurTextures[i] = std::make_shared<Renderer::Texture>(textureName, GL_TEXTURE_2D, width2, height2, 0,
+                                                                GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, false);
     }
 
     m_sourceTextureWidth = sourceTexture.Width();

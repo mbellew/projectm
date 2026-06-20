@@ -6,6 +6,7 @@
 
 #include "Renderer/Texture.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -69,6 +70,16 @@ public:
     auto GetTexture() const -> const std::shared_ptr<class Texture>&;
 
     /**
+     * @brief 2D RGBA16F mask/analysis buffer derived during preprocessing; register as "mask".
+     *
+     * Current-frame, video-space, sampled like the input. Channels:
+     *   R = seg (foreground/human matte = the app-supplied alpha), G = seg blur,
+     *   B = motion (frame-diff vs. previous frame), A = motion decay.
+     * See MASK_LAYERS.md.
+     */
+    auto GetMaskTexture() const -> const std::shared_ptr<class Texture>&;
+
+    /**
      * @brief Submits a new video frame. Safe to call from any thread.
      * Downscales the source to the configured texture size and stages it for upload.
      * If a previous frame is still pending, it is replaced.
@@ -96,8 +107,12 @@ public:
     /**
      * @brief Uploads the most recently staged frame, if any, to the next ring-buffer slice.
      * Must be called on the GL thread.
+     * @param params Fixed alpha-mode parameters (used when alphaShader is null).
+     * @param alphaShader Optional preset "combine" shader that authors the alpha (and optionally
+     *        rgb) written into the history from the live frame, the mask buffer and the history.
+     *        When set, the fixed alpha-mode refinement/cleanup is bypassed for this frame.
      */
-    void UpdateGPU(const AlphaParams& params);
+    void UpdateGPU(const AlphaParams& params, class Shader* alphaShader = nullptr);
 
     /**
      * @brief Sets the ChromaKey background color (normalized 0..1), supplied by the
@@ -135,10 +150,29 @@ public:
     /** @brief Normalized Z range covered by valid (filled) slices, in [0,1]. */
     float NormalizedRange() const;
 
+    /**
+     * @brief Wall-clock duration spanned by the valid slices, in seconds (0 until measured).
+     *
+     * The ring advances once per submitted source frame, whose rate may differ from the render
+     * rate, so this is derived from a running average of the measured time between advances. Lets
+     * presets sample by elapsed time: age = seconds_ago / BufferSeconds().
+     */
+    float BufferSeconds() const;
+
 private:
     void CreateTexture();
     void CreateGpuResources();
     void ConvertAndDownscale(const uint8_t* src, int srcW, int srcH, PixelFormat fmt, uint8_t* dst);
+
+    /**
+     * @brief Derives the mask buffer (seg/seg-blur/motion/motion-decay) into m_maskTexture.
+     * Assumes m_fbo is bound, the viewport is the texture size, samplers are cleared and m_vao is
+     * available. Leaves no mask FBO attachment behind. Used both before the combine pass (so a
+     * video_ shader can read MaskSeg/MaskMotion of the current frame) and, in the fixed path, after
+     * the slice copy.
+     * @param readIdx Ping-pong index of the previous frame's processed texture (motion reference).
+     */
+    void RunMaskBuffer(int readIdx);
 
     const int m_texWidth;
     const int m_texHeight;
@@ -146,6 +180,7 @@ private:
     const size_t m_sliceBytes;
 
     std::shared_ptr<class Texture> m_texture;
+    std::shared_ptr<class Texture> m_maskTexture; //!< 2D RGBA16F mask buffer (seg/seg-blur/motion/motion-decay).
 
     std::mutex m_mutex;
     std::vector<uint8_t> m_stagingBuffer;
@@ -165,6 +200,11 @@ private:
     int m_writeIndex{-1};
     uint32_t m_frameCount{0};
 
+    // Cadence of actual slice advances, for BufferSeconds() (source rate may differ from render rate).
+    std::chrono::steady_clock::time_point m_lastAdvanceTime{};
+    bool m_hasLastAdvance{false};
+    double m_secondsPerSlice{0.0}; //!< EMA of wall-clock seconds between slice advances.
+
     // GPU preprocessing resources (raw GL object names; created/destroyed on the GL thread).
     std::unique_ptr<Shader> m_preprocessShader;
     std::unique_ptr<Shader> m_morphShader; //!< Erode/dilate pass for mask cleanup.
@@ -172,6 +212,8 @@ private:
     std::unique_ptr<Shader> m_matteShader;    //!< B2: trimap + edge-snapping matte refine.
     std::unique_ptr<Shader> m_temporalShader; //!< B3: temporal EMA stabilization.
     std::unique_ptr<Shader> m_featherShader;  //!< B4: composite + feather.
+    std::unique_ptr<Shader> m_maskGatherShader; //!< Gathers seg/motion into the mask buffer.
+    std::unique_ptr<Shader> m_maskBlurShader;   //!< Blurs the seg channel into the mask buffer's G.
     uint32_t m_inputTex{0};      //!< 2D RGBA8: the uploaded downscaled camera frame.
     uint32_t m_prevTex[2]{0, 0}; //!< 2D RGBA16F ping-pong: processed [rawRGB, alpha].
     uint32_t m_bgTex[2]{0, 0};   //!< 2D RGBA16F ping-pong: background model.

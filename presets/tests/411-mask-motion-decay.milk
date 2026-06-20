@@ -1,0 +1,22 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+fDecay=0
+warp=0.000000
+wave_a=0
+fWaveAlpha=0
+
+per_frame_1=// Motion-decay demo (MASK_LAYERS.md). MaskMotionDecay(uv) is the A channel of the
+per_frame_2=// mask buffer: motion that lingers and fades (m = max(motion, prev*decay)). Wave a
+per_frame_3=// hand in front of the camera and the trail glows orange and slowly fades.
+per_frame_4=video_alpha_mode = 0;
+
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float decay = MaskMotionDecay(uv);
+comp_4=`    float mot   = MaskMotion(uv);
+comp_5=`    // Instant motion = white; the lingering decay tail = orange fading to black.
+comp_6=`    ret = float3(decay, decay * 0.5, 0.0) + float3(mot, mot, mot);
+comp_7=`}

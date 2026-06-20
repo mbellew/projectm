@@ -52,6 +52,10 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(bass_att);
     REG_VAR(mid_att);
     REG_VAR(treb_att);
+    REG_VAR(beat_phase);
+    REG_VAR(beat_onset);
+    REG_VAR(beat_bpm);
+    REG_VAR(beat_conf);
     REG_VAR(frame);
     REG_VAR(decay);
     REG_VAR(wave_a);
@@ -122,6 +126,7 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(video_alpha_init);
     REG_VAR(video_alpha_decay);
     REG_VAR(video_cleanup);
+    REG_VAR(video_refine);
 }
 
 void PerFrameContext::EvaluateInitCode(PresetState& state)
@@ -169,6 +174,7 @@ void PerFrameContext::EvaluateInitCode(PresetState& state)
     state.videoAlphaInit = static_cast<float>(*video_alpha_init);
     state.videoAlphaDecay = static_cast<float>(*video_alpha_decay);
     state.videoCleanup = static_cast<float>(*video_cleanup);
+    state.videoRefine = static_cast<float>(*video_refine);
 }
 
 void PerFrameContext::LoadStateVariables(PresetState& state)
@@ -191,6 +197,10 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *bass_att = static_cast<PRJM_EVAL_F>(state.audioData.bassAtt);
     *mid_att = static_cast<PRJM_EVAL_F>(state.audioData.midAtt);
     *treb_att = static_cast<PRJM_EVAL_F>(state.audioData.trebAtt);
+    *beat_phase = static_cast<PRJM_EVAL_F>(state.audioData.beatPhase);
+    *beat_onset = static_cast<PRJM_EVAL_F>(state.audioData.beatOnset);
+    *beat_bpm = static_cast<PRJM_EVAL_F>(state.audioData.bpm);
+    *beat_conf = static_cast<PRJM_EVAL_F>(state.audioData.beatConf);
     *frame = static_cast<PRJM_EVAL_F>(state.renderContext.frame);
     for (int q = 0; q < QVarCount; q++)
     {
@@ -260,6 +270,7 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *video_alpha_init = static_cast<PRJM_EVAL_F>(state.videoAlphaInit);
     *video_alpha_decay = static_cast<PRJM_EVAL_F>(state.videoAlphaDecay);
     *video_cleanup = static_cast<PRJM_EVAL_F>(state.videoCleanup);
+    *video_refine = static_cast<PRJM_EVAL_F>(state.videoRefine);
 }
 
 void PerFrameContext::CompilePerFrameCode(const std::string& perFrameCode)

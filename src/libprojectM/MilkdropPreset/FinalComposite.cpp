@@ -84,7 +84,7 @@ void FinalComposite::CompileCompositeShader(PresetState& presetState)
         }
         catch (Renderer::ShaderException& ex)
         {
-            LOG_WARN("[FinalComposite] Error compiling composite warp shader code - Using fallback shader.");
+            LOG_WARN("[FinalComposite] Error compiling composite shader code: " + ex.message() + " - Using fallback shader.");
 
             // Fall back to default shader
             m_compositeShader = std::make_unique<MilkdropShader>(MilkdropShader::ShaderType::CompositeShader);

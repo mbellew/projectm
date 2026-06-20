@@ -41,6 +41,14 @@ public:
      */
     bool Load(const std::string& modelPath, int size = 0, float downsampleRatio = 0.0f);
 
+    /**
+     * Loads a second model whose matte is multiplied into the primary's each frame
+     * (e.g. RVM soft matte x a person-class mask = a soft, people-only matte).
+     * Same auto-detection as Load(). Call after Load(). @return true on success.
+     */
+    bool LoadSecondary(const std::string& modelPath, int size = 0, float downsampleRatio = 0.0f,
+                       const std::string& combine = "multiply", float gateThreshold = 0.5f);
+
     bool IsLoaded() const;
 
     /**

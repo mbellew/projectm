@@ -139,15 +139,33 @@ auto FamilyCurve(ColorPalette::Family family, double knob, double t) -> Lch
 
 } // namespace
 
-auto ColorPalette::ColorAt(Family family, float knob, float t) -> Rgb
+namespace {
+
+/* The curve point as OKLab (L, a, b) — the form the families are actually defined in. */
+auto CurveLab(ColorPalette::Family family, double knob, double t) -> ColorPalette::Lab
 {
-    const Lch lch = FamilyCurve(family, Clamp01(knob), Clamp01(t));
+    const Lch lch = FamilyCurve(family, Clamp01(static_cast<float>(knob)), Clamp01(static_cast<float>(t)));
     const double hueRadians = lch.hueDegrees * (kPi / 180.0);
     const double chroma = lch.cFrac * MaxChroma(lch.L, hueRadians);
-    const LinearRgb lin = OkLabToLinearRgb(lch.L, chroma * std::cos(hueRadians), chroma * std::sin(hueRadians));
+    return {static_cast<float>(lch.L),
+            static_cast<float>(chroma * std::cos(hueRadians)),
+            static_cast<float>(chroma * std::sin(hueRadians))};
+}
+
+} // namespace
+
+auto ColorPalette::ColorAt(Family family, float knob, float t) -> Rgb
+{
+    const Lab lab = CurveLab(family, knob, t);
+    const LinearRgb lin = OkLabToLinearRgb(lab.L, lab.a, lab.b);
     return {static_cast<float>(LinearToSrgb(lin.r)),
             static_cast<float>(LinearToSrgb(lin.g)),
             static_cast<float>(LinearToSrgb(lin.b))};
+}
+
+auto ColorPalette::ColorAtLab(Family family, float knob, float t) -> Lab
+{
+    return CurveLab(family, knob, t);
 }
 
 auto ColorPalette::PackHandle(Family family, float knob) -> float
@@ -176,6 +194,78 @@ auto ColorPalette::KnobOf(float handle) -> float
 auto ColorPalette::ColorAt(float handle, float t) -> Rgb
 {
     return ColorAt(FamilyOf(handle), KnobOf(handle), t);
+}
+
+auto ColorPalette::BakeLut(int tSize, int knobSize) -> Lut
+{
+    if (tSize < 1) { tSize = 1; }
+    if (knobSize < 1) { knobSize = 1; }
+
+    const int depth = static_cast<int>(Family::Count);
+    Lut lut;
+    lut.width = tSize;
+    lut.height = knobSize;
+    lut.depth = depth;
+    lut.rgba.resize(static_cast<size_t>(tSize) * static_cast<size_t>(knobSize) *
+                    static_cast<size_t>(depth) * 4u);
+
+    auto toByte = [](float c) -> uint8_t {
+        const float v = c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
+        return static_cast<uint8_t>(v * 255.0f + 0.5f);
+    };
+
+    size_t idx = 0;
+    for (int f = 0; f < depth; ++f)
+    {
+        for (int ky = 0; ky < knobSize; ++ky)
+        {
+            // Sample at texel centers so GPU linear filtering reproduces ColorAt() values.
+            const float knob = (static_cast<float>(ky) + 0.5f) / static_cast<float>(knobSize);
+            for (int tx = 0; tx < tSize; ++tx)
+            {
+                const float t = (static_cast<float>(tx) + 0.5f) / static_cast<float>(tSize);
+                const Rgb c = ColorAt(static_cast<Family>(f), knob, t);
+                lut.rgba[idx++] = toByte(c.r);
+                lut.rgba[idx++] = toByte(c.g);
+                lut.rgba[idx++] = toByte(c.b);
+                lut.rgba[idx++] = 255;
+            }
+        }
+    }
+    return lut;
+}
+
+auto ColorPalette::BakeLutLab(int tSize, int knobSize) -> LabLut
+{
+    if (tSize < 1) { tSize = 1; }
+    if (knobSize < 1) { knobSize = 1; }
+
+    const int depth = static_cast<int>(Family::Count);
+    LabLut lut;
+    lut.width = tSize;
+    lut.height = knobSize;
+    lut.depth = depth;
+    lut.data.resize(static_cast<size_t>(tSize) * static_cast<size_t>(knobSize) *
+                    static_cast<size_t>(depth) * 4u);
+
+    size_t idx = 0;
+    for (int f = 0; f < depth; ++f)
+    {
+        for (int ky = 0; ky < knobSize; ++ky)
+        {
+            const float knob = (static_cast<float>(ky) + 0.5f) / static_cast<float>(knobSize);
+            for (int tx = 0; tx < tSize; ++tx)
+            {
+                const float t = (static_cast<float>(tx) + 0.5f) / static_cast<float>(tSize);
+                const Lab lab = ColorAtLab(static_cast<Family>(f), knob, t);
+                lut.data[idx++] = lab.L;
+                lut.data[idx++] = lab.a;
+                lut.data[idx++] = lab.b;
+                lut.data[idx++] = 0.0f;
+            }
+        }
+    }
+    return lut;
 }
 
 } // namespace Renderer

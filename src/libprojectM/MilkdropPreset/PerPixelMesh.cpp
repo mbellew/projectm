@@ -75,9 +75,9 @@ void PerPixelMesh::CompileWarpShader(PresetState& presetState)
             m_warpShader->LoadTexturesAndCompile(presetState);
             LOG_DEBUG("[PerPixelMesh] Successfully compiled warp shader code.");
         }
-        catch (Renderer::ShaderException&)
+        catch (Renderer::ShaderException& ex)
         {
-            LOG_ERROR("[PerPixelMesh] Error compiling warp shader code.");
+            LOG_ERROR("[PerPixelMesh] Error compiling warp shader code: " + ex.message());
             m_warpShader.reset();
         }
     }

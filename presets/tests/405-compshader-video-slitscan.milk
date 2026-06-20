@@ -14,10 +14,11 @@ per_frame_3=video_alpha_init = 0.0;
 
 // uv.x in [0,1] maps directly to age in [0,1].
 // Left edge = most recent, right edge = oldest available frame.
-comp_1=`shader_body
-comp_2=`{
-comp_3=`    float age = uv.x;
-comp_4=`    ret = GetVideo(uv, age).rgb;
-comp_5=`    // comment
-comp_6=`
-comp_7=`}
+comp_1=```
+shader_body
+{
+    float age = abs(uv.x-0.5)/3.0;
+    float4 vid = GetVideo(uv, age);
+    ret = vid.rgb * vid.a;
+}
+```

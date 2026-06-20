@@ -41,13 +41,12 @@ auto PresetFileParser::Read(std::istream& presetStream) -> bool
     size_t startPos{0}; //!< Starting position of current line
     size_t pos{0};      //!< Current read position
 
+    // Deliver every line to ParseLine, including empty ones: blank lines must be preserved
+    // inside a fenced (```) block. ParseLine ignores empty lines outside a fence.
     auto parseLineIfDataAvailable = [this, &pos, &startPos, &presetFileContents]() {
-        if (pos > startPos)
-        {
-            auto beg = presetFileContents.begin();
-            std::string line(beg + startPos, beg + pos);
-            ParseLine(line);
-        }
+        auto beg = presetFileContents.begin();
+        std::string line(beg + startPos, beg + pos);
+        ParseLine(line);
     };
 
     while (pos < presetFileContents.size())
@@ -70,6 +69,13 @@ auto PresetFileParser::Read(std::istream& presetStream) -> bool
     }
 
     parseLineIfDataAvailable();
+
+    // A fenced block left open at EOF (missing closing ```) still commits its content.
+    if (m_inFence && !m_fenceKey.empty() && m_presetValues.find(m_fenceKey) == m_presetValues.end())
+    {
+        m_presetValues.emplace(m_fenceKey, m_fenceBody);
+    }
+    m_inFence = false;
 
     return !m_presetValues.empty();
 }
@@ -163,6 +169,28 @@ const std::map<std::string, std::string>& PresetFileParser::PresetValues() const
 
 void PresetFileParser::ParseLine(const std::string& line)
 {
+    // Inside a ``` fenced block: accumulate raw lines verbatim until the closing fence.
+    if (m_inFence)
+    {
+        if (IsFenceMarker(line))
+        {
+            // Closing fence: commit the accumulated body (first occurrence wins, like normal keys).
+            if (!m_fenceKey.empty() && m_presetValues.find(m_fenceKey) == m_presetValues.end())
+            {
+                m_presetValues.emplace(m_fenceKey, m_fenceBody);
+            }
+            m_inFence = false;
+            m_fenceKey.clear();
+            m_fenceBody.clear();
+        }
+        else
+        {
+            m_fenceBody.append(line);
+            m_fenceBody.push_back('\n');
+        }
+        return;
+    }
+
     // Search for first delimiter, either space or equal
     auto varNameDelimiterPos = line.find_first_of(" =");
 
@@ -176,11 +204,29 @@ void PresetFileParser::ParseLine(const std::string& line)
     std::string varName(ToLower(std::string(line.begin(), line.begin() + varNameDelimiterPos)));
     std::string value(line.begin() + varNameDelimiterPos + 1, line.end());
 
+    // A value of just ``` opens a multi-line fenced block: the following lines become this
+    // key's value verbatim until a closing ```. Lets a whole section be one block instead of
+    // numbered, backtick-prefixed lines.
+    if (IsFenceMarker(value))
+    {
+        m_inFence = true;
+        m_fenceKey = std::move(varName);
+        m_fenceBody.clear();
+        return;
+    }
+
     // Only add first occurrence to mimic Milkdrop behaviour
     if (!varName.empty() && m_presetValues.find(varName) == m_presetValues.end())
     {
         m_presetValues.emplace(std::move(varName), std::move(value));
     }
+}
+
+auto PresetFileParser::IsFenceMarker(const std::string& line) -> bool
+{
+    // True when the only non-whitespace content is exactly three backticks.
+    const auto lastNonWs = line.find_last_not_of(" \t\r\n");
+    return lastNonWs == 2 && line.compare(0, 3, "```") == 0;
 }
 
 auto PresetFileParser::ToLower(std::string str) -> std::string

@@ -31,24 +31,25 @@ void main(){
     // + moves blur UP, LEFT by 1-pixel increments
     vec2 uv2 = fragment_texture.xy + srctexsize.zw*vec2(1.0,1.0);
 
-    vec3 blur =
-    (texture(texture_sampler, uv2 + vec2(d1 * srctexsize.z, 0)).xyz +
-    texture(texture_sampler, uv2 + vec2(-d1 * srctexsize.z, 0)).xyz) *
+    // Blur all four channels (RGB + alpha) in one pass.
+    vec4 blur =
+    (texture(texture_sampler, uv2 + vec2(d1 * srctexsize.z, 0)) +
+    texture(texture_sampler, uv2 + vec2(-d1 * srctexsize.z, 0))) *
     w1 +
-    (texture(texture_sampler, uv2 + vec2(d2 * srctexsize.z, 0)).xyz +
-    texture(texture_sampler, uv2 + vec2(-d2 * srctexsize.z, 0)).xyz) *
+    (texture(texture_sampler, uv2 + vec2(d2 * srctexsize.z, 0)) +
+    texture(texture_sampler, uv2 + vec2(-d2 * srctexsize.z, 0))) *
     w2 +
-    (texture(texture_sampler, uv2 + vec2(d3 * srctexsize.z, 0)).xyz +
-    texture(texture_sampler, uv2 + vec2(-d3 * srctexsize.z, 0)).xyz) *
+    (texture(texture_sampler, uv2 + vec2(d3 * srctexsize.z, 0)) +
+    texture(texture_sampler, uv2 + vec2(-d3 * srctexsize.z, 0))) *
     w3 +
-    (texture(texture_sampler, uv2 + vec2(d4 * srctexsize.z, 0)).xyz +
-    texture(texture_sampler, uv2 + vec2(-d4 * srctexsize.z, 0)).xyz) *
+    (texture(texture_sampler, uv2 + vec2(d4 * srctexsize.z, 0)) +
+    texture(texture_sampler, uv2 + vec2(-d4 * srctexsize.z, 0))) *
     w4;
 
-    blur.xyz *= w_div;
+    blur *= w_div;
 
-    blur.xyz = blur.xyz*fscale + fbias;
-
-    color.xyz = blur;
-    color.w   = 1.0;
+    // Color channels are renormalized per blur level for 8-bit precision; alpha is
+    // kept in its native [0,1] range so GetBlurA#() can read it back directly.
+    color.xyz = blur.xyz*fscale + fbias;
+    color.w   = blur.w;
 }

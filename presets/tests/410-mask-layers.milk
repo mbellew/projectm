@@ -1,0 +1,26 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+fDecay=0
+warp=0.000000
+wave_a=0
+fWaveAlpha=0
+
+per_frame_1=// Mask buffer demo (MASK_LAYERS.md). Visualizes the per-pixel mask channels:
+per_frame_2=//   R = seg (foreground/human matte; app-supplied or 1.0 if no matte)
+per_frame_3=//   G = seg blur (dedicated current-frame blur of seg)
+per_frame_4=//   B = motion (frame-diff vs. the previous video frame)
+per_frame_5=// Run with a video source; motion (B) shows even without a foreground matte.
+per_frame_6=video_alpha_mode = 0;
+
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float seg  = MaskSeg(uv);
+comp_4=`    float blur = MaskSegBlur(uv);
+comp_5=`    float mot  = MaskMotion(uv);
+comp_6=`    // R=seg (sharp), G=seg blur (soft halo), B=motion. A blurred seg shows a green
+comp_7=`    // fringe around the red silhouette; motion lights up blue where the frame changes.
+comp_8=`    ret = float3(seg, blur, mot);
+comp_9=`}

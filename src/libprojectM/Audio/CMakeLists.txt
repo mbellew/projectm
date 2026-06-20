@@ -1,6 +1,8 @@
 
 add_library(Audio OBJECT
         AudioConstants.hpp
+        BeatDetect.cpp
+        BeatDetect.hpp
         MilkdropFFT.cpp
         MilkdropFFT.hpp
         FrameAudioData.hpp

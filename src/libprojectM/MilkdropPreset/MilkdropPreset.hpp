@@ -28,6 +28,7 @@
 #include "CustomWaveform.hpp"
 #include "DarkenCenter.hpp"
 #include "FinalComposite.hpp"
+#include "MilkdropShader.hpp"
 #include "MotionVectors.hpp"
 #include "PerFrameContext.hpp"
 #include "PerPixelContext.hpp"
@@ -127,6 +128,8 @@ private:
     Renderer::CopyTexture m_flipTexture{GL_RGBA16F, GL_RGBA, GL_FLOAT}; /*FLOATBUF*/                                                //!< Texture flip filter
 
     FinalComposite m_finalComposite; //!< Final composite shader or filters.
+
+    std::unique_ptr<MilkdropShader> m_videoShader; //!< Optional preset video_ shader: computes the alpha/rgb written into the video history. Null when the preset has none (use the fixed video_alpha_mode path).
 
     bool m_isFirstFrame{true}; //!< Controls drawing the motion vectors starting with the second frame.
 };

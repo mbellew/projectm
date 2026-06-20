@@ -30,8 +30,11 @@ class MilkdropShader
 public:
     enum class ShaderType
     {
-        WarpShader,     //!< Warp shader
-        CompositeShader //!< Composite shader
+        WarpShader,      //!< Warp shader
+        CompositeShader, //!< Composite shader
+        VideoShader      //!< Video preprocess "combine" shader: computes the alpha (and optionally
+                         //!< rgb) written into the video history texture, from the live frame,
+                         //!< the mask buffer (MaskSeg/MaskMotion/...) and the history (GetVideo).
     };
 
     /**
@@ -52,6 +55,14 @@ public:
      * @param presetState The preset state to pull the values and textures from.
      */
     void LoadTexturesAndCompile(PresetState& presetState);
+
+    /**
+     * @brief Translates and compiles a VideoShader. Requires a current GL context.
+     *
+     * Unlike LoadTexturesAndCompile, this needs no PresetState: the video preprocess pass owns
+     * its textures (the live frame, the mask buffer and the history). Call after LoadCode().
+     */
+    void CompileVideoShader();
 
     /**
      * @brief Loads all required shader variables into the uniforms.
@@ -86,6 +97,15 @@ private:
      * @param program The shader to transpile.
      */
     void TranspileHLSLShader(const PresetState& presetState, std::string& program);
+
+    /**
+     * @brief Translates the VideoShader HLSL into GLSL and compiles it.
+     *
+     * Declares the fixed set of preprocess-owned samplers (no TextureManager descriptors) and
+     * pairs the result with the fullscreen video vertex shader.
+     * @param program The preprocessed shader to transpile.
+     */
+    void TranspileVideoShader(std::string& program);
 
     /**
      * @brief Updates the requested blur level if higher than before.

@@ -37,3 +37,12 @@ Menu Font = VeraMono.ttf
 #Video Mask = seg
 # Seg quality 1/2/3 -> 256/384/512 processing size (higher = crisper, slower). Default 2.
 #Video Seg Quality = 2
+# Optional second seg model: its matte combines with the primary's, e.g. a soft RVM matte
+# clipped to people by a person-class model. Leave unset to use the single model alone.
+# $PROJECTM_SEG_MODEL2 overrides.
+#Video Seg Model 2 = ~/.projectM/models/u2net_human_seg.onnx
+# How the second model's matte combines with the primary's ($PROJECTM_SEG_COMBINE overrides):
+#   multiply (default) = primary * secondary
+#   gate               = pass the primary where the secondary is present, reject (zero) elsewhere
+#                        (preserves the primary's edges; $PROJECTM_SEG_GATE sets the cutoff, def 0.5)
+#Video Seg Combine = multiply
