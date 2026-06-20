@@ -117,10 +117,10 @@ Override the path with `$PROJECTM_SEG_MODEL`.
    implementing the `VideoCapture` contract (mirrors the macOS AVFoundation
    backend): enumerates `/dev/video*` capture nodes, selects by preference-ordered
    case-insensitive name substring (falling back to the first usable device),
-   negotiates YUYV/RGB24/BGR24 at 640×480, streams via mmap on a worker thread,
-   converts to BGRX, and `Stop()` joins the thread to drain any in-flight callback
-   (so tearing down the seg masker mid-inference can't crash). MJPEG-only cameras
-   are not yet supported.
+   negotiates YUYV/RGB24/BGR24/MJPEG at 640×480, streams via mmap on a worker
+   thread, converts to BGRX (MJPEG frames are decoded with the vendored stb_image),
+   and `Stop()` joins the thread to drain any in-flight callback (so tearing down
+   the seg masker mid-inference can't crash). YUYV is preferred when offered.
 
 4. **`src/sdl-test-ui/CMakeLists.txt`** — default-enable `ENABLE_VIDEO_CAPTURE` on
    Linux, compile `videoCapture_linux.cpp`, define `PROJECTM_VIDEO_CAPTURE_ENABLED`
@@ -199,9 +199,12 @@ PROJECTM_PRESET_LIST=<(echo presets/tests/401-compshader-video-alpha.milk) \
 | `PROJECTM_PRESET_PATH` | Directory of presets to load. |
 | `PROJECTM_PRESET_LIST` | File listing presets (one path per line); keeps file order. |
 
-The `justfile` has convenience recipes (`just run` / `just test` / `just video` /
-`just preset <file>`), though its default `build` recipe targets the macOS Luxonis +
-ONNX setup; on Linux use the explicit `cmake` invocation in §5.
+The `justfile` is OS-aware: on Linux `just build` configures the V4L2 + ONNX build
+into `cmake-build-linux/` (the §5 invocation), and `just run` / `just test` /
+`just video` / `just preset <file>` run the test UI against the respective preset
+dirs. (On macOS the same recipes target the Luxonis + ONNX build in
+`cmake-build-luxonis/`.) `just build` does not set `PROJECTM_VIDEO_MASK`; export it
+yourself to enable seg, e.g. `PROJECTM_VIDEO_MASK=seg just test`.
 
 ---
 
@@ -225,5 +228,4 @@ instead: `sudo usermod -aG video $USER` (re-login required).
 
 - **Luxonis OAK depth camera** (`ENABLE_LUXONIS`): needs depthai-core built/installed
   standalone (see comments in `src/sdl-test-ui/CMakeLists.txt`). Still a no-op stub.
-- **MJPEG** capture format in the V4L2 backend (only YUYV/RGB24/BGR24 today).
 - A GPU/NPU ONNX execution provider on Linux (CUDA/TensorRT/DirectML) — currently CPU.

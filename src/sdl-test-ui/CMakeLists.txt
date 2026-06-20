@@ -133,9 +133,10 @@ if(ENABLE_VIDEO_CAPTURE AND APPLE)
             "-framework Foundation"
             )
 elseif(ENABLE_VIDEO_CAPTURE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
-    # The V4L2 backend runs capture on a std::thread.
+    # The V4L2 backend runs capture on a std::thread and decodes MJPEG frames via
+    # the vendored stb_image (same decoder the Renderer uses).
     find_package(Threads REQUIRED)
-    target_link_libraries(projectM-Test-UI PRIVATE Threads::Threads)
+    target_link_libraries(projectM-Test-UI PRIVATE Threads::Threads stb_image)
 endif()
 
 target_link_libraries(projectM-Test-UI

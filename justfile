@@ -1,19 +1,30 @@
-build_dir := "cmake-build-luxonis"
+# Build directory, per-OS so the macOS Luxonis build and the Linux V4L2 build don't clobber each other.
+build_dir := if os() == "macos" { "cmake-build-luxonis" } else { "cmake-build-linux" }
 # Luxonis OAK (depthai-core) install prefix; see reference_depthai_build_macos for how it's built.
 depthai_prefix := env_var('HOME') / ".local/depthai-core"
-# ONNX Runtime (person-seg) install prefix; prebuilt osx-arm64 package.
+# ONNX Runtime (person-seg) install prefix (prebuilt: osx-arm64 on macOS, linux-x64 on Linux).
 onnx_prefix := env_var('HOME') / ".local/onnxruntime"
 
 # Audio/video source preferences (and other settings) live in ~/.projectM/config.inp,
 # a local, untracked file: Audio Devices / Video Devices / Fullscreen, etc.
 
-# Configure and build (Luxonis OAK depth + ONNX person-seg support enabled)
+# Configure and build with ONNX person-seg support.
+#   macOS: also enables the Luxonis OAK depth camera (depthai-core).
+#   Linux: enables the V4L2 camera backend instead (Luxonis not wired up yet).
 build:
-    mkdir -p {{build_dir}}
-    cd {{build_dir}} && cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_SDL_UI=ON \
-        -DENABLE_LUXONIS=ON -DENABLE_ONNX_SEG=ON \
-        -DCMAKE_PREFIX_PATH="{{depthai_prefix}};{{onnx_prefix}}" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{os()}}" = "macos" ]; then
+        cmake -S . -B {{build_dir}} -DCMAKE_BUILD_TYPE=Release -DENABLE_SDL_UI=ON \
+            -DENABLE_LUXONIS=ON -DENABLE_ONNX_SEG=ON \
+            -DCMAKE_PREFIX_PATH="{{depthai_prefix}};{{onnx_prefix}}" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    else
+        cmake -S . -B {{build_dir}} -DCMAKE_BUILD_TYPE=Release -DENABLE_SDL_UI=ON \
+            -DENABLE_VIDEO_CAPTURE=ON -DENABLE_ONNX_SEG=ON \
+            -DCMAKE_PREFIX_PATH="{{onnx_prefix}}" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    fi
     cmake --build {{build_dir}} --parallel
 
 # Run the test UI

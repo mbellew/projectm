@@ -13,11 +13,13 @@
  * (possibly deep in a SegMasker ONNX Run()) before returning, so the caller can
  * safely tear down the masker/handle afterwards.
  *
- * Pixel formats handled: YUYV (the near-universal UVC default), plus RGB24/BGR24
- * (common from v4l2loopback virtual cameras). Devices that only offer MJPEG are
- * rejected with a clear log listing what they advertise.
+ * Pixel formats handled: YUYV (the near-universal UVC default), RGB24/BGR24
+ * (common from v4l2loopback virtual cameras), and MJPEG (decoded via the vendored
+ * stb_image) for cameras that only offer compressed output at the desired size.
  */
 #include "videoCapture.hpp"
+
+#include <stb_image.h>
 
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
@@ -228,13 +230,25 @@ bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>&
         return false;
     }
 
+    auto handled = [](uint32_t f) {
+        return f == V4L2_PIX_FMT_YUYV || f == V4L2_PIX_FMT_RGB24 ||
+               f == V4L2_PIX_FMT_BGR24 || f == V4L2_PIX_FMT_MJPEG;
+    };
+
+    // If the driver substituted a format we can't decode (e.g. an MJPEG-only cam
+    // ignored the YUYV request and picked something else), explicitly ask for MJPEG.
+    if (!handled(fmt.fmt.pix.pixelformat))
+    {
+        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;
+        xioctl(fd, VIDIOC_S_FMT, &fmt);
+    }
+
     const uint32_t pf = fmt.fmt.pix.pixelformat;
-    if (pf != V4L2_PIX_FMT_YUYV && pf != V4L2_PIX_FMT_RGB24 && pf != V4L2_PIX_FMT_BGR24)
+    if (!handled(pf))
     {
         const char* fourcc = reinterpret_cast<const char*>(&fmt.fmt.pix.pixelformat);
         std::fprintf(stderr,
-                     "[VideoCapture] %s offers unsupported pixel format '%c%c%c%c' (need YUYV/RGB24/BGR24). "
-                     "MJPEG-only cameras are not yet supported.\n",
+                     "[VideoCapture] %s offers unsupported pixel format '%c%c%c%c' (need YUYV/RGB24/BGR24/MJPEG).\n",
                      chosen->path.c_str(), fourcc[0], fourcc[1], fourcc[2], fourcc[3]);
         close(fd);
         return false;
@@ -339,6 +353,8 @@ bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>&
 
             const uint8_t* src = static_cast<const uint8_t*>(impl->buffers[buf.index].start);
             uint8_t* dst = impl->bgrx.data();
+            int cbW = w;
+            int cbH = h;
 
             if (impl->pixelFormat == V4L2_PIX_FMT_YUYV)
             {
@@ -361,7 +377,7 @@ bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>&
                     dst[i * 4 + 3] = 255;
                 }
             }
-            else // V4L2_PIX_FMT_BGR24
+            else if (impl->pixelFormat == V4L2_PIX_FMT_BGR24)
             {
                 for (int i = 0; i < w * h; ++i)
                 {
@@ -371,10 +387,37 @@ bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>&
                     dst[i * 4 + 3] = 255;
                 }
             }
+            else // V4L2_PIX_FMT_MJPEG: decode the compressed frame (buf.bytesused) to RGB.
+            {
+                int dw = 0, dh = 0, channels = 0;
+                stbi_uc* rgb = stbi_load_from_memory(src, static_cast<int>(buf.bytesused),
+                                                     &dw, &dh, &channels, 3);
+                if (!rgb)
+                {
+                    // Corrupt/partial JPEG — skip this frame and keep streaming.
+                    if (xioctl(impl->fd, VIDIOC_QBUF, &buf) == -1) { break; }
+                    continue;
+                }
+                if (static_cast<size_t>(dw) * dh * 4 != impl->bgrx.size())
+                {
+                    impl->bgrx.resize(static_cast<size_t>(dw) * dh * 4);
+                    dst = impl->bgrx.data();
+                }
+                for (int i = 0; i < dw * dh; ++i)
+                {
+                    dst[i * 4 + 0] = rgb[i * 3 + 2]; // B
+                    dst[i * 4 + 1] = rgb[i * 3 + 1]; // G
+                    dst[i * 4 + 2] = rgb[i * 3 + 0]; // R
+                    dst[i * 4 + 3] = 255;
+                }
+                stbi_image_free(rgb);
+                cbW = dw;
+                cbH = dh;
+            }
 
             if (impl->callback)
             {
-                impl->callback(dst, w, h, VideoCapture::PixelFormat::BGRX);
+                impl->callback(dst, cbW, cbH, VideoCapture::PixelFormat::BGRX);
             }
 
             if (xioctl(impl->fd, VIDIOC_QBUF, &buf) == -1)
