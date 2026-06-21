@@ -409,9 +409,15 @@ void Framebuffer::RemoveAttachment(int framebufferIndex, GLenum attachmentType)
     glBindFramebuffer(GL_FRAMEBUFFER, m_framebufferIds.at(framebufferIndex));
 
     glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentType, GL_TEXTURE_2D, 0, 0);
-    UpdateDrawBuffers(framebufferIndex);
 
+    // Erase the attachment BEFORE rebuilding the draw-buffer list, so the removed buffer is
+    // actually dropped from glDrawBuffers. Otherwise DRAW_BUFFER<n> stays bound to the detached
+    // attachment, and any later dual-source-blended draw (waveforms/borders) becomes a
+    // GL_INVALID_OPERATION on strict drivers (NVIDIA) — dual-source blending requires exactly one
+    // draw buffer — so the draw is silently discarded and the preset renders black.
     m_attachments.at(framebufferIndex).erase(attachmentType);
+
+    UpdateDrawBuffers(framebufferIndex);
 
     // Reset to previous read/draw buffers
     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_framebufferIds.at(m_readFramebuffer));
