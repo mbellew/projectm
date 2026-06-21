@@ -1,0 +1,30 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=3
+PSVERSION_WARP=3
+PSVERSION_COMP=3
+// Image-file palette: loads <Palette Path>/prayerwheel.jpg, bilinear-resampled into the per-preset
+// LUT (image U -> value t, image V -> knob). Requires "Palette Path = ~/.projectM/palettes" in
+// config.inp. Set PALETTE_SMOOTH (0..1) to test the linear-light Gaussian smoothing.
+PALETTE_NAME=prayerwheel
+PALETTE_SMOOTH=0.02
+fDecay=0.5
+wave_a=0
+fWaveAlpha=0
+comp_1=```
+shader_body
+{
+    // Left half: the raw palette LUT (x = value t, y = knob / image row V) -- this IS the resampled
+    // prayerwheel image, so it directly confirms the file loaded. Right half: a horizontal
+    // luminance ramp gradient-mapped through the palette at the same knob row (PaletteMap).
+    if (uv.x < 0.5)
+    {
+        ret = Palette(uv.y, uv.x * 2.0);
+    }
+    else
+    {
+        float t_ = (uv.x - 0.5) * 2.0;
+        ret = PaletteMap(uv.y, float3(t_, t_, t_));
+    }
+}
+```
