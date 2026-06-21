@@ -299,7 +299,22 @@ curl -fsSLO $CUDA/libcurand/linux-x86_64/libcurand-linux-x86_64-10.4.0.35-archiv
 curl -fsSLO $CUDNN/cudnn/linux-x86_64/cudnn-linux-x86_64-9.14.0.64_cuda13-archive.tar.xz
 for f in *.tar.xz; do tar xf "$f"; done
 mkdir -p ~/.local/cuda-runtime/lib
-find . -path '*/lib/*' -name '*.so*' -exec cp -P {} ~/.local/cuda-runtime/lib/ \;
+# NOTE the `-not -path '*/stubs/*'`: the libcublas tarball ships a tiny link-time
+# *stub* libcublas.so / libcublasLt.so under lib/stubs/ alongside the real (50 MB /
+# 540 MB) libraries. Without the exclusion the stub flattens into the dir and wins
+# the soname, so cublasCreate() returns error 50 at session init and the ORT CUDA
+# provider hard-crashes in its own error formatter (not a catchable fallback).
+find . -path '*/lib/*' -name '*.so*' -not -path '*/stubs/*' \
+    -exec cp -P {} ~/.local/cuda-runtime/lib/ \;
+```
+
+Sanity-check that the real (not stub) cuBLAS landed — the soname should resolve to a
+multi-MB file and carry no "stub version" string:
+
+```shell
+stat -L -c '%s  %n' ~/.local/cuda-runtime/lib/libcublas.so.13   # want ~50 MB, not ~75 KB
+strings -a ~/.local/cuda-runtime/lib/libcublas.so.13 | grep -i 'stub version' \
+    && echo 'STUB — re-copy excluding */stubs/*' || echo 'real cuBLAS OK'
 ```
 
 > Versions are from the CUDA `13.0.2` and cuDNN `9.14.0` redist manifests
@@ -327,3 +342,9 @@ If instead you see `CUDA EP unavailable (...); using CPU`, the provider or a CUD
 library failed to load — check `LD_LIBRARY_PATH` and that every `.so` above is in
 `~/.local/cuda-runtime/lib`. To revert to the CPU build:
 `rm -rf ~/.local/onnxruntime && mv ~/.local/onnxruntime-cpu-bak ~/.local/onnxruntime`.
+
+If instead the process **segfaults right after** the "Using CUDA execution provider"
+line (during session init, in `__strlen` inside `libonnxruntime_providers_cuda.so`),
+a CUDA library loaded but a call into it failed and ORT crashed in its own error
+formatter rather than throwing. The usual cause is a **stub cuBLAS** — see the
+sanity-check in Step 2; re-copy excluding `*/stubs/*`.
