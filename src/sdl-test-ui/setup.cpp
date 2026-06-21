@@ -30,6 +30,31 @@ static std::vector<std::string> splitPreferenceList(const std::string& value)
     return result;
 }
 
+// Expand a leading "~" / "~/" in a config path to $HOME, for consistency across all path-valued
+// config.inp keys (Preset Path, Texture Path, Video Seg Model[ 2], Video Seg Combine, ...). Only a
+// leading tilde is handled (not "~user"); empty / non-tilde / no-$HOME values pass through.
+static std::string expandTilde(const std::string& path)
+{
+    if (path.empty() || path.front() != '~')
+    {
+        return path;
+    }
+    const char* home = std::getenv("HOME");
+    if (home == nullptr)
+    {
+        return path;
+    }
+    if (path.size() == 1) // "~"
+    {
+        return std::string(home);
+    }
+    if (path[1] == '/') // "~/..."
+    {
+        return std::string(home) + path.substr(1);
+    }
+    return path; // "~something" (e.g. ~user) — unsupported, leave unchanged
+}
+
 #if OGL_DEBUG
 void debugGL(GLenum source,
              GLenum type,
@@ -279,10 +304,25 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
     else
     {
         std::string presetURL;
-        if (const char* presetEnv = getenv("PROJECTM_PRESET_PATH"))
+        const char* presetEnv = getenv("PROJECTM_PRESET_PATH");
+
+        // Config fallback so the appliance doesn't need $PROJECTM_PRESET_PATH: the "Preset Path"
+        // key sets the preset directory ("~" expands to $HOME). The env var still wins (for dev).
+        std::string cfgPreset;
+        if (presetEnv == nullptr && !configFilePath.empty())
+        {
+            cfgPreset = expandTilde(ConfigFile(configFilePath).read<std::string>("Preset Path", std::string()));
+        }
+
+        if (presetEnv != nullptr)
         {
             presetURL = presetEnv;
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using preset path from $PROJECTM_PRESET_PATH: %s\n", presetURL.c_str());
+        }
+        else if (!cfgPreset.empty())
+        {
+            presetURL = cfgPreset;
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using preset path from config \"Preset Path\": %s\n", presetURL.c_str());
         }
         else
         {
@@ -329,9 +369,9 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         audioDevicePrefs = splitPreferenceList(config.read<std::string>("Audio Devices", std::string()));
         app->setVideoDevicePrefs(splitPreferenceList(config.read<std::string>("Video Devices", std::string())));
         app->setVideoMaskPref(config.read<std::string>("Video Mask", std::string()));
-        app->setVideoSegModel(config.read<std::string>("Video Seg Model", std::string()));
-        app->setVideoSegModel2(config.read<std::string>("Video Seg Model 2", std::string()));
-        app->setVideoSegCombine(config.read<std::string>("Video Seg Combine", std::string()));
+        app->setVideoSegModel(expandTilde(config.read<std::string>("Video Seg Model", std::string())));
+        app->setVideoSegModel2(expandTilde(config.read<std::string>("Video Seg Model 2", std::string())));
+        app->setVideoSegCombine(config.read<std::string>("Video Seg Combine", std::string())); // a mode, not a path
         app->setVideoSegQuality(config.read<int>("Video Seg Quality", 0));
 
         // Texture search path(s) for image samplers (e.g. sampler_rand00). ';'-separated,
@@ -340,14 +380,7 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         std::vector<std::string> texturePaths = splitPreferenceList(config.read<std::string>("Texture Path", std::string()));
         for (auto& path : texturePaths)
         {
-            if (!path.empty() && path.front() == '~')
-            {
-                const char* home = std::getenv("HOME");
-                if (home != nullptr)
-                {
-                    path = std::string(home) + path.substr(1);
-                }
-            }
+            path = expandTilde(path);
         }
         if (!texturePaths.empty())
         {
