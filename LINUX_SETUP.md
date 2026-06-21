@@ -81,9 +81,13 @@ cp -r onnxruntime-linux-x64-${ver}/lib     ~/.local/onnxruntime/
 ```
 
 The build's `find_path`/`find_library` locate `onnxruntime_cxx_api.h` and
-`libonnxruntime.so` under this prefix via `CMAKE_PREFIX_PATH` (see §5). CPU
-execution provider only — the CoreML EP is macOS-only and is `#ifdef __APPLE__`'d
-out (see §4).
+`libonnxruntime.so` under this prefix via `CMAKE_PREFIX_PATH` (see §5).
+
+This CPU package is enough to **build** everything and run seg on the CPU. RVM on
+the CPU only produces a few matte frames per second, though, so for a responsive
+mask use the NVIDIA GPU build instead — see **§9. GPU acceleration**. The build
+itself is identical either way (the GPU providers load at runtime); only the
+installed ONNX Runtime package and the runtime library path differ.
 
 ### Person-seg model → `~/.projectM/models/rvm_mobilenetv3.onnx`
 
@@ -193,6 +197,8 @@ PROJECTM_PRESET_LIST=<(echo presets/tests/401-compshader-video-alpha.milk) \
 | `PROJECTM_VIDEO_MASK=seg` | Enable host ONNX person-seg as the alpha-mask producer (`off` = raw video). |
 | `PROJECTM_SEG_MODEL` | Path to the `.onnx` model (default `~/.projectM/models/rvm_mobilenetv3.onnx`). |
 | `PROJECTM_SEG_MODEL2` / `PROJECTM_SEG_COMBINE` | Optional 2nd model multiplied/gated into the primary matte. |
+| `PROJECTM_SEG_CUDA` | `1` (default) tries the NVIDIA CUDA EP, falls back to CPU; `0` forces CPU. See §9. |
+| `PROJECTM_SEG_CUDA_DEVICE` | CUDA device index (default 0). |
 | `PROJECTM_SEG_QUALITY` | 1/2/3 → 256/384/512 processing size (default 2). |
 | `PROJECTM_SEG_SIZE` | Raw processing size override (px). |
 | `PROJECTM_VIDEO_DEVICE` | Camera name substring (case-insensitive); else first usable device. |
@@ -228,4 +234,96 @@ instead: `sudo usermod -aG video $USER` (re-login required).
 
 - **Luxonis OAK depth camera** (`ENABLE_LUXONIS`): needs depthai-core built/installed
   standalone (see comments in `src/sdl-test-ui/CMakeLists.txt`). Still a no-op stub.
-- A GPU/NPU ONNX execution provider on Linux (CUDA/TensorRT/DirectML) — currently CPU.
+- **TensorRT** EP (the ORT GPU package ships `libonnxruntime_providers_tensorrt.so`,
+  but it needs a TensorRT install and is not wired up). CUDA EP is supported — §9.
+
+---
+
+## 9. GPU acceleration (NVIDIA CUDA, optional)
+
+RVM person-seg on the CPU produces the matte at only a few frames per second, so
+the masked video lags the camera even though the visualizer renders at 60 FPS.
+Running the seg model on an NVIDIA GPU via the ONNX Runtime **CUDA execution
+provider** lets the matte keep up.
+
+The code attempts the CUDA EP automatically on non-Apple platforms
+(`segMask.cpp`) and **falls back to CPU** if anything is missing — so this whole
+section is optional. `PROJECTM_SEG_CUDA=0` forces CPU.
+
+> **Heads-up: this is a heavy, fiddly add-on** (~1.5 GB of NVIDIA libraries, exact
+> version matching across driver/CUDA/cuDNN/ORT). The build does not change — only
+> the installed ONNX Runtime package and a runtime `LD_LIBRARY_PATH` differ. If you
+> don't need a real-time matte, skip it and stay on the CPU package from §3.
+
+### Requirements
+
+- An NVIDIA GPU + driver new enough for **CUDA 13** (`nvidia-smi` shows the
+  capable "CUDA Version"). Blackwell cards (e.g. RTX 50-series, sm_120) **require**
+  CUDA 13 — the ORT CUDA 12 build won't have native kernels for them.
+- No CUDA toolkit and no `sudo` needed: we fetch only the prebuilt runtime `.so`
+  files from NVIDIA's **redistributable tarballs** (not pip, not the full toolkit).
+
+### Step 1 — GPU ONNX Runtime build (replaces the CPU one at the same prefix)
+
+```shell
+ver=1.27.0
+cd /tmp
+curl -fsSLO https://github.com/microsoft/onnxruntime/releases/download/v${ver}/onnxruntime-linux-x64-gpu_cuda13-${ver}.tgz
+tar xzf onnxruntime-linux-x64-gpu_cuda13-${ver}.tgz
+mv ~/.local/onnxruntime ~/.local/onnxruntime-cpu-bak    # keep the CPU build around
+mkdir -p ~/.local/onnxruntime
+cp -r onnxruntime-linux-x64-gpu_cuda13-${ver}/include ~/.local/onnxruntime/
+cp -r onnxruntime-linux-x64-gpu_cuda13-${ver}/lib     ~/.local/onnxruntime/
+```
+
+The GPU package is a superset of the CPU one (same headers + `libonnxruntime.so`,
+plus `libonnxruntime_providers_cuda.so`). The project's CMake config (`§5`) is
+unchanged — `libonnxruntime.so`'s soname is identical, so **no rebuild is needed**.
+
+### Step 2 — CUDA 13 + cuDNN 9 runtime libraries (NVIDIA redist tarballs)
+
+`libonnxruntime_providers_cuda.so` dlopens these at runtime:
+`libcudart.so.13`, `libcublas.so.13`, `libcublasLt.so.13`, `libcufft.so.12`,
+`libcurand.so.10`, `libnvrtc.so.13`, `libcudnn.so.9` (`libcuda.so.1` comes from the
+driver). Fetch just those components and collect their `.so` files into one dir:
+
+```shell
+mkdir -p /tmp/cudaredist && cd /tmp/cudaredist
+CUDA=https://developer.download.nvidia.com/compute/cuda/redist
+CUDNN=https://developer.download.nvidia.com/compute/cudnn/redist
+curl -fsSLO $CUDA/cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-13.0.96-archive.tar.xz
+curl -fsSLO $CUDA/cuda_nvrtc/linux-x86_64/cuda_nvrtc-linux-x86_64-13.0.88-archive.tar.xz
+curl -fsSLO $CUDA/libcublas/linux-x86_64/libcublas-linux-x86_64-13.1.0.3-archive.tar.xz
+curl -fsSLO $CUDA/libcufft/linux-x86_64/libcufft-linux-x86_64-12.0.0.61-archive.tar.xz
+curl -fsSLO $CUDA/libcurand/linux-x86_64/libcurand-linux-x86_64-10.4.0.35-archive.tar.xz
+curl -fsSLO $CUDNN/cudnn/linux-x86_64/cudnn-linux-x86_64-9.14.0.64_cuda13-archive.tar.xz
+for f in *.tar.xz; do tar xf "$f"; done
+mkdir -p ~/.local/cuda-runtime/lib
+find . -path '*/lib/*' -name '*.so*' -exec cp -P {} ~/.local/cuda-runtime/lib/ \;
+```
+
+> Versions are from the CUDA `13.0.2` and cuDNN `9.14.0` redist manifests
+> (`developer.download.nvidia.com/compute/{cuda,cudnn}/redist/redistrib_<ver>.json`).
+> Pick newer point releases the same way if these age out — any CUDA 13.x / cuDNN 9.x
+> matching the ORT cuda13 build works.
+
+### Step 3 — Run with the CUDA libraries on the loader path
+
+```shell
+LD_LIBRARY_PATH="$HOME/.local/cuda-runtime/lib:$LD_LIBRARY_PATH" \
+PROJECTM_VIDEO_MASK=seg \
+PROJECTM_PRESET_PATH=presets/tests \
+  ./build/src/sdl-test-ui/projectM-Test-UI
+```
+
+`libonnxruntime.so` finds its sibling CUDA provider via its own rpath; the provider
+finds the CUDA/cuDNN libs via `LD_LIBRARY_PATH`. Success log line:
+
+```
+INFO: [SegMasker] Using CUDA execution provider (device 0).
+```
+
+If instead you see `CUDA EP unavailable (...); using CPU`, the provider or a CUDA
+library failed to load — check `LD_LIBRARY_PATH` and that every `.so` above is in
+`~/.local/cuda-runtime/lib`. To revert to the CPU build:
+`rm -rf ~/.local/onnxruntime && mv ~/.local/onnxruntime-cpu-bak ~/.local/onnxruntime`.

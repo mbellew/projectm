@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <system_error>
 #include <unordered_map>
 
@@ -273,8 +274,7 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
         options.SetIntraOpNumThreads(2);
         options.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
 #ifdef __APPLE__
-        // CoreML execution provider (ANE/GPU) is macOS-only. Other platforms run on
-        // the default CPU provider; a GPU/NPU EP could be added per-platform later.
+        // CoreML execution provider (ANE/GPU) is macOS-only.
         if (EnvInt("PROJECTM_SEG_COREML", 1) != 0)
         {
             try
@@ -300,6 +300,31 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
             {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "[SegMasker] CoreML EP unavailable (%s); using CPU.", e.what());
+            }
+        }
+#else
+        // NVIDIA CUDA execution provider. Supplied at runtime by the GPU ONNX Runtime
+        // build (libonnxruntime_providers_cuda.so) when CUDA + cuDNN are present; on a
+        // CPU-only ORT or any missing library the call throws and we fall back to the
+        // CPU provider. Disable explicitly with PROJECTM_SEG_CUDA=0.
+        if (EnvInt("PROJECTM_SEG_CUDA", 1) != 0)
+        {
+            try
+            {
+                OrtCUDAProviderOptions cudaOptions{};
+                cudaOptions.device_id = EnvInt("PROJECTM_SEG_CUDA_DEVICE", 0);
+                cudaOptions.gpu_mem_limit = std::numeric_limits<size_t>::max();
+                cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
+                cudaOptions.do_copy_in_default_stream = 1;
+                options.AppendExecutionProvider_CUDA(cudaOptions);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "[SegMasker] Using CUDA execution provider (device %d).",
+                            cudaOptions.device_id);
+            }
+            catch (const std::exception& e)
+            {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "[SegMasker] CUDA EP unavailable (%s); using CPU.", e.what());
             }
         }
 #endif
