@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Managed by the projectM appliance Ansible role. Do not edit by hand. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.projectm.appliance</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/{{ appliance_user }}/.projectM/run-projectm.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PROJECTM_BINARY</key>
+        <string>{{ projectm_binary }}</string>
+{% if projectm_preset_list %}
+        <key>PROJECTM_PRESET_LIST</key>
+        <string>{{ projectm_preset_list }}</string>
+{% else %}
+        <key>PROJECTM_PRESET_PATH</key>
+        <string>{{ projectm_preset_path }}</string>
+{% endif %}
+    </dict>
+
+    <!-- Launch at login. Relaunch only on a crash (non-zero exit), so a deliberate
+         Cmd-Q quits and stays quit — handy on a machine that's also a regular desktop.
+         For a locked-down kiosk that should never be quittable, use <key>KeepAlive</key><true/>. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Throttle relaunch storms if it exits immediately. -->
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/{{ appliance_user }}/.projectM/projectm.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/{{ appliance_user }}/.projectM/projectm.log</string>
+</dict>
+</plist>

@@ -6,6 +6,9 @@
 
 #include <projectM-4/projectM_cxx_export.h>
 
+#include <string>
+#include <vector>
+
 namespace libprojectM {
 namespace Renderer {
 
@@ -39,6 +42,10 @@ public:
 
     TextureManager* textureManager{nullptr}; //!< Holds all loaded textures for shader access.
     ShaderCache* shaderCache{nullptr}; //!< The shader chace of this projectM instance.
+
+    //! Search paths for color-palette image files (PALETTE_NAME). Points at the projectM instance's
+    //! list (stable; read only at preset load), so per-frame context copies stay cheap. Null = none.
+    const std::vector<std::string>* paletteSearchPaths{nullptr};
 
     VideoTexture* videoTexture{nullptr}; //!< Optional 3D video-history texture, null if not configured.
     float videoZWrite{0.0f};             //!< Normalized Z of the most-recent video slice (uniform video_z_write).

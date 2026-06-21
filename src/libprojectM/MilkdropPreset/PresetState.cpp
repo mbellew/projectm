@@ -36,15 +36,15 @@ PresetState::~PresetState()
 void PresetState::Initialize(PresetFileParser& parsedFile)
 {
 
-    // Color palette: declared in the header (the eval parser has no string constants), resolved
-    // once here and fixed for the preset's lifetime. PALETTE_NAME is a built-in family name or a
-    // comma list (choose one at load). PALETTE_SMOOTH sets both blur axes; _H/_V override per axis.
+    // Color palette: declared in the header (the eval parser has no string constants). PALETTE_NAME
+    // is a built-in family name or image stem, or a comma list (choose one at load). PALETTE_SMOOTH
+    // sets both blur axes; _H/_V override per axis. The values are parsed here but the palette is
+    // *resolved* in MilkdropPreset::Initialize (where the palette search paths are available).
+    paletteName = parsedFile.GetString("PALETTE_NAME", "");
     {
-        const std::string paletteName = parsedFile.GetString("PALETTE_NAME", "");
         const float paletteSmooth = parsedFile.GetFloat("PALETTE_SMOOTH", 0.0f);
-        const float paletteSmoothH = parsedFile.GetFloat("PALETTE_SMOOTH_H", paletteSmooth);
-        const float paletteSmoothV = parsedFile.GetFloat("PALETTE_SMOOTH_V", paletteSmooth);
-        palette.Resolve(paletteName, paletteSmoothH, paletteSmoothV);
+        paletteSmoothH = parsedFile.GetFloat("PALETTE_SMOOTH_H", paletteSmooth);
+        paletteSmoothV = parsedFile.GetFloat("PALETTE_SMOOTH_V", paletteSmooth);
     }
 
     // General:

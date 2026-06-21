@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Embedded into the Mach-O (__TEXT,__info_plist) so a bare CLI / LaunchAgent launch has a
+         TCC identity and the camera/microphone consent prompts carry a real description.
+         Without NSCameraUsageDescription macOS terminates the process on first camera access. -->
+    <key>CFBundleIdentifier</key>
+    <string>net.bellew.projectM</string>
+    <key>CFBundleName</key>
+    <string>projectM</string>
+    <key>CFBundleExecutable</key>
+    <string>projectM-Test-UI</string>
+    <key>CFBundleShortVersionString</key>
+    <string>4.1.0</string>
+    <key>NSCameraUsageDescription</key>
+    <string>projectM uses the camera as a live video source for its music-visualizer presets.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>projectM listens to audio input so the visuals react to the music.</string>
+</dict>
+</plist>

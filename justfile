@@ -66,3 +66,26 @@ deploy-macos: build
 deploy-linux: build
     BUILD_DIR={{build_dir}} DEPTHAI_PREFIX={{depthai_prefix}} ONNX_PREFIX={{onnx_prefix}} \
         deploy/deploy-linux.sh
+
+# Install the built macOS bundle into an appliance user's home + seed ~/.projectM (needs sudo).
+# Run `just deploy-macos` first. Example: `just deploy-to-user brpl`
+deploy-to-user user="brpl": deploy-macos
+    sudo deploy/install-to-appliance.sh {{user}}
+
+# Edit appliance/ansible/group_vars/all.yml first; prompts for sudo. Does NOT enable auto-login or
+# rewrite config.inp. Then log in as the appliance user to verify (camera works in that user's GUI
+# session; logs at ~<user>/.projectM/projectm.log).
+# Install the appliance autostart LaunchAgent (projectM fullscreen at the appliance user's login)
+appliance-autostart:
+    cd appliance && ./bootstrap.sh --tags autostart
+
+# Needs sudo + a real appliance_user_password in group_vars/all.yml; requires FileVault OFF. Reboot
+# to take effect.
+# Enable macOS auto-login for the appliance user (writes /etc/kcpassword)
+appliance-autologin:
+    cd appliance && ./bootstrap.sh --tags autologin
+
+# Skip config when the deploy bundle already seeded ~/.projectM/config.inp: append `--skip-tags config`.
+# Apply the full appliance playbook: user + config + autostart + autologin (see appliance/README.md)
+appliance-provision:
+    cd appliance && ./bootstrap.sh

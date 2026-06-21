@@ -1,0 +1,35 @@
+---
+# Enable macOS automatic login for the appliance user.
+# WARNING: this stores the account password obfuscated (not encrypted) in /etc/kcpassword,
+# and does not work with FileVault enabled. See appliance/README.md.
+
+- name: Set the automatic-login user
+  become: true
+  ansible.builtin.command: >-
+    /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser
+    "{{ appliance_user }}"
+  register: autologin_user
+  changed_when: true
+
+- name: Copy the kcpassword helper
+  become: true
+  ansible.builtin.copy:
+    src: kcpassword.py
+    dest: /usr/local/sbin/projectm-kcpassword.py
+    owner: root
+    group: wheel
+    mode: "0700"
+
+- name: Write /etc/kcpassword (obfuscated auto-login password)
+  become: true
+  ansible.builtin.command: /usr/bin/python3 /usr/local/sbin/projectm-kcpassword.py
+  environment:
+    KC_PASSWORD: "{{ appliance_user_password }}"
+  no_log: true
+  changed_when: true
+
+- name: Note
+  ansible.builtin.debug:
+    msg: >-
+      Automatic login enabled for '{{ appliance_user }}'. This requires FileVault to be OFF.
+      It takes effect on the next reboot.

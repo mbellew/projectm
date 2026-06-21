@@ -145,6 +145,7 @@ target_link_libraries(MilkdropPreset
         PRIVATE
         projectM::Eval
         libprojectM::API # For export header
+        stb_image # palette image-file decoding (Palette.cpp)
         PUBLIC
         hlslparser
         GLM::GLM

@@ -58,6 +58,16 @@ void MilkdropPreset::Initialize(const Renderer::RenderContext& renderContext)
 {
     assert(renderContext.textureManager);
     m_state.renderContext = renderContext;
+
+    // Resolve the color palette now that the search paths are available (PALETTE_NAME may name an
+    // image file). Fixed for the preset's lifetime; feeds palette_r/g/b (eval) and sampler_fc_palette.
+    {
+        static const std::vector<std::string> noPaths;
+        const std::vector<std::string>& palettePaths =
+            renderContext.paletteSearchPaths != nullptr ? *renderContext.paletteSearchPaths : noPaths;
+        m_state.palette.Resolve(m_state.paletteName, m_state.paletteSmoothH, m_state.paletteSmoothV, palettePaths);
+    }
+
     m_state.blurTexture.Initialize(renderContext);
     m_state.LoadShaders();
 

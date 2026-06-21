@@ -1,0 +1,30 @@
+---
+# Install a per-user LaunchAgent that runs projectM fullscreen at login and relaunches it
+# if it exits.
+- name: Ensure LaunchAgents directory exists
+  become: true
+  ansible.builtin.file:
+    path: "/Users/{{ appliance_user }}/Library/LaunchAgents"
+    state: directory
+    owner: "{{ appliance_user }}"
+    group: staff
+    mode: "0755"
+
+- name: Install the projectM launcher script
+  become: true
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../launch/run-projectm.sh"
+    dest: "/Users/{{ appliance_user }}/.projectM/run-projectm.sh"
+    owner: "{{ appliance_user }}"
+    group: staff
+    mode: "0755"
+
+- name: Render the LaunchAgent plist
+  become: true
+  ansible.builtin.template:
+    src: com.projectm.appliance.plist.j2
+    dest: "/Users/{{ appliance_user }}/Library/LaunchAgents/com.projectm.appliance.plist"
+    owner: "{{ appliance_user }}"
+    group: staff
+    mode: "0644"
+  # The agent loads at the appliance user's next login (i.e. after reboot with auto-login).

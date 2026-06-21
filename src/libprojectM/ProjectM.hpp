@@ -114,6 +114,9 @@ public:
      */
     void SetTexturePaths(std::vector<std::string> texturePaths);
 
+    /** @brief Sets the search paths for color-palette image files (PALETTE_NAME). Read at preset load. */
+    void SetPaletteSearchPaths(std::vector<std::string> paletteSearchPaths);
+
     void ResetTextures();
 
     /**
@@ -366,6 +369,7 @@ private:
     float m_texelOffsetY{0.0};       //!< Vertical warp shader texel offset
 
     std::vector<std::string> m_textureSearchPaths;     ///!< List of paths to search for texture files
+    std::vector<std::string> m_paletteSearchPaths;     ///!< Search paths for color-palette image files (PALETTE_NAME).
     Renderer::TextureLoadCallback m_textureLoadCallback; //!< Optional callback for loading textures from non-filesystem sources.
 
     /** Timing information */

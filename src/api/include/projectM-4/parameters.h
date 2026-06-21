@@ -48,6 +48,20 @@ PROJECTM_EXPORT void projectm_set_texture_search_paths(projectm_handle instance,
                                                        size_t count);
 
 /**
+ * @brief Sets the search paths for color-palette image files (the PALETTE_NAME preset key).
+ *
+ * A palette named "foo" resolves to "foo.png"/".jpg" found in these paths; if no file is found,
+ * "foo" falls back to a curated built-in family of that name. Read at preset load.
+ *
+ * @param instance The projectM instance handle.
+ * @param palette_search_paths A list of palette search paths.
+ * @param count The number of paths in the list.
+ */
+PROJECTM_EXPORT void projectm_set_palette_search_paths(projectm_handle instance,
+                                                       const char** palette_search_paths,
+                                                       size_t count);
+
+/**
  * @brief Sets a user-specified frame time in fractional seconds.
  *
  * Setting this to any value equal to or larger than zero will make projectM use this time value for
