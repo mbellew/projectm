@@ -1,0 +1,31 @@
+# config.inp — managed by the projectM appliance Ansible role. Do not edit by hand.
+
+Mesh X  = {{ projectm_mesh_x }}
+Mesh Y  = {{ projectm_mesh_y }}
+FPS     = {{ projectm_fps }}
+Preset Duration = {{ projectm_preset_duration }}
+Beat Sensitivity = {{ projectm_beat_sensitivity }}
+Aspect Correction = true
+
+Fullscreen = {{ 'true' if projectm_fullscreen else 'false' }}
+{% if projectm_audio_devices %}
+Audio Devices = {{ projectm_audio_devices }}
+{% endif %}
+{% if projectm_video_devices %}
+Video Devices = {{ projectm_video_devices }}
+{% endif %}
+{% if projectm_preset_path %}
+
+# Preset directory ("~" expands to $HOME). Matches the deploy bundle layout (~/projectm).
+Preset Path = {{ projectm_preset_path }}
+{% endif %}
+
+# Texture search path for image samplers ("~" expands to $HOME).
+Texture Path = {{ projectm_texture_path | default('~/.projectM/textures') }}
+{% if projectm_video_mask %}
+
+# Foreground masking. "seg" = ONNX person segmentation (RVM) on the webcam color frame.
+# Model defaults to $HOME/.projectM/models/rvm_mobilenetv3.onnx (seeded by the deploy bundle).
+Video Mask = {{ projectm_video_mask }}
+Video Seg Quality = {{ projectm_seg_quality | default(2) }}
+{% endif %}

@@ -1,0 +1,48 @@
+---
+# Copy this file to all.yml and edit. all.yml is git-ignored because it holds a password.
+#
+# Intended flow: build + install the deploy bundle first —
+#     just deploy-macos && just deploy-to-user <user>
+# which puts a self-contained bundle at /Users/<user>/projectm and seeds ~/.projectM. Then this
+# playbook adds the system pieces the bundle can't: the autostart LaunchAgent and auto-login.
+# If the bundle already seeded config.inp, you can skip the config role: ./bootstrap.sh --skip-tags config
+
+# --- Appliance account -------------------------------------------------------------------
+appliance_user: brpl
+appliance_user_fullname: "projectM Appliance"
+# Password for the kiosk account. Also used to enable auto-login (stored obfuscated in
+# /etc/kcpassword). Use a dedicated throwaway account — see README caveats.
+appliance_user_password: "changeme"
+
+# Enable macOS automatic login for the appliance user. Set false to configure it manually.
+enable_autologin: true
+
+# --- projectM binary + presets (deploy bundle at /Users/<user>/projectm) ------------------
+projectm_binary: "/Users/brpl/projectm/bin/projectM-Test-UI"
+
+# Preset source. Use a directory...
+projectm_preset_path: "/Users/brpl/projectm/share/projectm/presets/video"
+# ...or a favorites list file (leave empty to use projectm_preset_path):
+projectm_preset_list: ""
+
+# --- Visualizer config (written to ~/.projectM/config.inp by the config role) -------------
+projectm_fullscreen: true
+
+# Capture-source preference order, highest first, ';'-separated, case-insensitive substrings.
+# First present device wins; otherwise the system default is used. Leave empty for default.
+projectm_audio_devices: "BlackHole"
+projectm_video_devices: "Camera"
+
+# Foreground masking. "seg" = ONNX person segmentation on the webcam; empty/"off" to disable.
+projectm_video_mask: "seg"
+projectm_seg_quality: 2
+
+# Texture search path ("~" expands to $HOME; the deploy bundle seeds ~/.projectM/textures).
+projectm_texture_path: "~/.projectM/textures"
+
+# Optional extra projectM config values (defaults shown).
+projectm_fps: 60
+projectm_preset_duration: 30
+projectm_mesh_x: 60
+projectm_mesh_y: 40
+projectm_beat_sensitivity: 1.0

@@ -1,0 +1,6 @@
+# Holds the appliance account password — never commit.
+ansible/group_vars/all.yml
+
+# Python bytecode cache (e.g. from the kcpassword helper).
+__pycache__/
+*.pyc

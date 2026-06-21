@@ -1,0 +1,46 @@
+# Example appliance ~/.projectM/config.inp.
+# The Ansible `config` role normally generates this from group_vars; this file documents the
+# appliance-relevant keys for manual setups.
+
+Mesh X  = 60
+Mesh Y  = 40
+FPS     = 60
+Preset Duration = 30
+Beat Sensitivity = 1.0
+Aspect Correction = true
+
+# Start fullscreen at launch (the appliance wants this true). CLI --fullscreen/--windowed wins.
+Fullscreen = true
+
+# Preset directory ("~" expands to $HOME). The deploy bundle installs to ~/projectm, so its video
+# presets live here — set this and no $PROJECTM_PRESET_PATH env var is needed. The env var (or
+# $PROJECTM_PRESET_LIST) still overrides this if set.
+Preset Path = ~/projectm/share/projectm/presets/video
+
+# Capture-source preference order, highest first, ';'-separated, case-insensitive substrings.
+# First present device wins; otherwise the system default is used. $PROJECTM_AUDIO_DEVICE /
+# $PROJECTM_VIDEO_DEVICE env vars, if set, take precedence over these lists.
+Audio Devices = BlackHole; Scarlett
+Video Devices = Camera
+
+# Texture search path for image samplers (the deploy bundle seeds ~/.projectM/textures).
+# "~" expands to $HOME.
+Texture Path = ~/.projectM/textures
+
+# Palette search path for image-based color palettes (the PALETTE_NAME preset key). A palette named
+# "foo" loads "foo.png"/".jpg" from here; if no file is found, "foo" falls back to a curated built-in
+# family of that name (neon, pastel, jewel, earth, muted, monochromatic, saturated-primary).
+# ';'-separated, "~" expands to $HOME.
+Palette Path = ~/.projectM/palettes
+
+# Application-global foreground masking. "seg" = ONNX person segmentation (RVM) on the webcam
+# color frame; the library masks the camera feed for all video presets. $PROJECTM_VIDEO_MASK overrides.
+Video Mask = seg
+
+# Processing size 1/2/3 -> 256/384/512: higher = crisper matte but slower. 2 is the safe default;
+# a fan-cooled machine can run 3. $PROJECTM_SEG_QUALITY overrides.
+Video Seg Quality = 2
+
+# Model path is intentionally left to the default ($HOME/.projectM/models/rvm_mobilenetv3.onnx,
+# seeded by the deploy bundle) so this config stays user-agnostic. To use the u2net gate hybrid, set
+# a path here (a leading "~" expands to $HOME, like the other path keys) and "Video Seg Combine = gate".

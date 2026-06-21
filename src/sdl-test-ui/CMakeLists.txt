@@ -109,6 +109,16 @@ if(_onnx_found)
     target_link_libraries(projectM-Test-UI PRIVATE ${ONNXRUNTIME_LIBRARY})
 endif()
 
+if(APPLE)
+    # Embed Info.plist into the Mach-O (__TEXT,__info_plist) so a bare CLI / LaunchAgent launch has
+    # a TCC identity (bundle id) and the camera/microphone consent prompts carry usage strings.
+    # Without NSCameraUsageDescription macOS kills the process the moment it opens the camera.
+    set(_info_plist "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist")
+    target_link_options(projectM-Test-UI PRIVATE
+            "-Wl,-sectcreate,__TEXT,__info_plist,${_info_plist}")
+    set_target_properties(projectM-Test-UI PROPERTIES LINK_DEPENDS "${_info_plist}")
+endif()
+
 if(ENABLE_VIDEO_CAPTURE AND APPLE)
     target_compile_definitions(projectM-Test-UI PRIVATE PROJECTM_VIDEO_CAPTURE_ENABLED=1)
     set_source_files_properties(videoCapture_macos.mm PROPERTIES
