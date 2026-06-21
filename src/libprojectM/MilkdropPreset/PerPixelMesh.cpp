@@ -366,7 +366,7 @@ void PerPixelMesh::EnsureWorkerContexts(const PresetState& presetState, int work
     m_workerContexts.reserve(static_cast<size_t>(workerCount));
     for (int i = 0; i < workerCount; i++)
     {
-        auto context = std::make_unique<PerPixelContext>(presetState.globalMemory, globalRegisters);
+        auto context = std::make_unique<PerPixelContext>(presetState.globalMemory, globalRegisters, &presetState.palette);
         context->RegisterBuiltinVariables();
         context->CompilePerPixelCode(presetState.perPixelCode);
         m_workerContexts.push_back(std::move(context));

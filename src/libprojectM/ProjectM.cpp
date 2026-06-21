@@ -31,7 +31,6 @@
 #include <Renderer/CopyTexture.hpp>
 #include <Renderer/PresetTransition.hpp>
 #include <Renderer/ShaderCache.hpp>
-#include <Renderer/ColorPalette.hpp>
 #include <Renderer/Texture.hpp>
 #include <Renderer/TextureManager.hpp>
 #include <Renderer/TransitionShaderManager.hpp>
@@ -96,8 +95,6 @@ void ProjectM::SetTexturePaths(std::vector<std::string> texturePaths)
     {
         m_textureManager->SetTextureLoadCallback(m_textureLoadCallback);
     }
-    m_textureManager->RegisterTexture("palette", PaletteLutTexture());
-    m_textureManager->RegisterTexture("palette_lab", PaletteLabLutTexture());
     if (m_videoTexture)
     {
         m_textureManager->RegisterTexture("video", m_videoTexture->GetTexture());
@@ -112,39 +109,11 @@ void ProjectM::ResetTextures()
     {
         m_textureManager->SetTextureLoadCallback(m_textureLoadCallback);
     }
-    m_textureManager->RegisterTexture("palette", PaletteLutTexture());
-    m_textureManager->RegisterTexture("palette_lab", PaletteLabLutTexture());
     if (m_videoTexture)
     {
         m_textureManager->RegisterTexture("video", m_videoTexture->GetTexture());
         m_textureManager->RegisterTexture("mask", m_videoTexture->GetMaskTexture());
     }
-}
-
-auto ProjectM::PaletteLutTexture() -> const std::shared_ptr<Renderer::Texture>&
-{
-    if (!m_paletteLut)
-    {
-        // Bake the curated palettes once into a t x knob x family RGBA8 volume. 256x32x7 = ~229KB.
-        const auto lut = Renderer::ColorPalette::BakeLut(256, 32);
-        m_paletteLut = std::make_shared<Renderer::Texture>(
-            "palette", lut.rgba.data(), GL_TEXTURE_3D, lut.width, lut.height, lut.depth,
-            GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, false);
-    }
-    return m_paletteLut;
-}
-
-auto ProjectM::PaletteLabLutTexture() -> const std::shared_ptr<Renderer::Texture>&
-{
-    if (!m_paletteLabLut)
-    {
-        // OKLab (L,a,b) volume for perceptual snap/pull distance + blending. RGBA16F (a/b signed).
-        const auto lut = Renderer::ColorPalette::BakeLutLab(256, 32);
-        m_paletteLabLut = std::make_shared<Renderer::Texture>(
-            "palette_lab", lut.data.data(), GL_TEXTURE_3D, lut.width, lut.height, lut.depth,
-            GL_RGBA16F, GL_RGBA, GL_FLOAT, false);
-    }
-    return m_paletteLabLut;
 }
 
 void ProjectM::SetTextureLoadCallback(Renderer::TextureLoadCallback callback)

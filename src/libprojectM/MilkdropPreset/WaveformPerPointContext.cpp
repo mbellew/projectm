@@ -13,10 +13,10 @@
 namespace libprojectM {
 namespace MilkdropPreset {
 
-WaveformPerPointContext::WaveformPerPointContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100])
+WaveformPerPointContext::WaveformPerPointContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette)
     : perPointCodeContext(projectm_eval_context_create(gmegabuf, globalRegisters))
 {
-    RegisterPaletteFunctions(perPointCodeContext);
+    RegisterPaletteFunctions(perPointCodeContext, palette);
 }
 
 WaveformPerPointContext::~WaveformPerPointContext()

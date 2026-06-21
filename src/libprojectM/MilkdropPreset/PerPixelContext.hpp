@@ -15,7 +15,7 @@ public:
      * @param gmegabuf The global memory buffer to use in the code context.
      * @param globalRegisters The global variables to use in the code context.
      */
-    PerPixelContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100]);
+    PerPixelContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette);
 
     /**
      * @brief Destructor.

@@ -3,16 +3,16 @@ MILKDROP_PRESET_VERSION=201
 PSVERSION=2
 PSVERSION_WARP=2
 PSVERSION_COMP=2
+PALETTE_NAME=neon
 fDecay=0
 warp=0.000000
 wave_a=0
 fWaveAlpha=0
 
-// Palette LUT demo: 7 horizontal bands, one per family (0 Pastel .. 6 SaturatedPrimary),
-// each swept across t = uv.x. Knob fixed at 0.7. Proves Palette() samples the baked 3D LUT.
+// Palette LUT demo: the preset's single palette (PALETTE_NAME=neon) shown as its 2D field —
+// x = value t (along the palette), y = knob (the family tweak / image row). Proves Palette(knob,t)
+// samples the per-preset 2D LUT.
 comp_1=`shader_body
 comp_2=`{
-comp_3=`    float family = floor(uv.y * 7.0);   // 0..6 top-to-bottom
-comp_4=`    float pal = family + 0.7;            // packed handle: family + knob(0.7)
-comp_5=`    ret = Palette(pal, uv.x);
-comp_6=`}
+comp_3=`    ret = Palette(uv.y, uv.x);
+comp_4=`}

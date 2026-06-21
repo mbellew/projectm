@@ -8,6 +8,7 @@
 #include "Constants.hpp"
 
 #include "BlurTexture.hpp"
+#include "Palette.hpp"
 
 #include <Audio/FrameAudioData.hpp>
 
@@ -175,6 +176,8 @@ public:
 
     std::weak_ptr<Renderer::Texture> mainTexture; //!< A weak reference to the main texture in the preset framebuffer.
     BlurTexture blurTexture;                      //!< The blur textures used in this preset. Contents depend on the shader code using GetBlurX().
+
+    Palette palette; //!< The preset's single color palette (PALETTE_NAME), resolved at load, fixed after. Sampled by palette_r/g/b(knob,t). Address is stable, so it's safe to register with the eval host functions before Initialize() resolves it.
 
     std::map<int, Renderer::TextureSamplerDescriptor> randomTextureDescriptors; //!< Descriptors for random texture IDs. Should be the same across both warp and comp shaders.
 

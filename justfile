@@ -45,3 +45,13 @@ preset file: build
     trap 'rm -f "$list"' EXIT
     printf '%s\n' "{{file}}" > "$list"
     PROJECTM_PRESET_LIST="$list" {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
+
+# Build a self-contained, relocatable macOS appliance bundle into dist/ (see deploy/README.md)
+deploy-macos: build
+    BUILD_DIR={{build_dir}} DEPTHAI_PREFIX={{depthai_prefix}} ONNX_PREFIX={{onnx_prefix}} \
+        deploy/deploy-macos.sh
+
+# Build a self-contained Linux appliance bundle (not yet implemented)
+deploy-linux: build
+    BUILD_DIR={{build_dir}} DEPTHAI_PREFIX={{depthai_prefix}} ONNX_PREFIX={{onnx_prefix}} \
+        deploy/deploy-linux.sh

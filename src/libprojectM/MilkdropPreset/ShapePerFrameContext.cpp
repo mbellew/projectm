@@ -12,10 +12,10 @@
 namespace libprojectM {
 namespace MilkdropPreset {
 
-ShapePerFrameContext::ShapePerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100])
+ShapePerFrameContext::ShapePerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette)
     : perFrameCodeContext(projectm_eval_context_create(gmegabuf, globalRegisters))
 {
-    RegisterPaletteFunctions(perFrameCodeContext);
+    RegisterPaletteFunctions(perFrameCodeContext, palette);
 }
 
 ShapePerFrameContext::~ShapePerFrameContext()

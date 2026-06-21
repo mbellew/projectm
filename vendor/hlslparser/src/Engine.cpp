@@ -116,15 +116,26 @@ void Log_Error(const char * format, ...) {
     va_end(args);
 }
 
-void Log_ErrorArgList(const char * format, va_list args) {
-    //using libprojectM::Logging;
+// Accumulates the formatted text of every Log_Error() since the last Log_ClearError(). The
+// parser/generator report the precise cause here (offending token, line, expected type), but the
+// message used to be discarded -- callers can now surface it instead of a generic "parse failed".
+static thread_local std::string s_lastError;
 
+void Log_ErrorArgList(const char * format, va_list args) {
     va_list tmp;
     va_copy(tmp, args);
     std::vector<char> buffer(static_cast<size_t>(std::vsnprintf(nullptr, 0, format, tmp)) + 1, '\0');
     va_end(tmp);
     vsnprintf(buffer.data(), buffer.size(), format, args );
-    //LOG_ERROR("[HLSLParser] " + std::string(buffer.data()));
+    s_lastError.append(buffer.data());
+}
+
+void Log_ClearError() {
+    s_lastError.clear();
+}
+
+const char * Log_GetLastError() {
+    return s_lastError.c_str();
 }
 
 

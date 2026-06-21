@@ -196,25 +196,25 @@ uniform float4x3 rot_rand4;
 #define MaskMotion(uv) (tex2D(sampler_fc_mask, uv).b)
 #define MaskMotionDecay(uv) (tex2D(sampler_fc_mask, uv).a)
 
-// Curated color palettes (baked LUT, matches the per-frame palette_r/g/b eval functions).
-// pal = packed handle: integer part = family (0 Pastel,1 Muted,2 Jewel,3 Earth,4 Monochromatic,
-// 5 Neon,6 SaturatedPrimary), fractional part = knob in [0,1). t in [0,1] runs along the curve.
-#define Palette(pal, t) (tex3D(sampler_fc_palette, float3(saturate(t), frac(pal), (floor(pal) + 0.5) / 7.0)).rgb)
-// Gradient-map a color through a palette by its luminance (cheap duotone). This is a luminance
-// map; PaletteSnap/PalettePull below are the perceptual nearest-point versions.
-#define PaletteMap(pal, c) (Palette(pal, lum(c)))
+// Curated color palette. The preset's single palette (PALETTE_NAME) is baked once into a 2D LUT
+// and matches the per-frame palette_r/g/b(knob, t) eval functions (same baked data).
+//   t    = value in [0,1], runs along the palette (U).
+//   knob = the family tweak / image row in [0,1] (V); fixed or animated, the palette itself is not.
+#define Palette(knob, t) (tex2D(sampler_fc_palette, float2(saturate(t), saturate(knob))).rgb)
+// Gradient-map a color through the palette by its luminance (cheap duotone) at row knob. This is a
+// luminance map; PaletteSnap/PalettePull below are the perceptual nearest-point versions.
+#define PaletteMap(knob, c) (Palette(knob, lum(c)))
 
-// Perceptual palette snap/pull. Both walk the palette curve (sampled from the LUT, so they work
-// for any handle with no per-palette bake; the knob animates free) and project a color onto it.
-// Distance AND (for pull) the blend happen in OKLab — the perceptually-uniform space the palettes
-// are defined in — so matching tracks how the eye sees color and the soft blend stays vivid
-// instead of desaturating toward gray. Samplers are always declared (see MilkdropShader); unused
-// helper functions are dead-stripped by the GLSL compiler.
+// Perceptual palette snap/pull. Both walk the palette's value axis at a fixed knob (PALETTE_STEPS
+// taps) and project a color onto it. Distance AND (for pull) the blend happen in OKLab — the
+// perceptually-uniform space the palettes are defined in — so matching tracks how the eye sees
+// color and the soft blend stays vivid instead of desaturating toward gray. Samplers are always
+// declared (see MilkdropShader); unused helper functions are dead-stripped by the GLSL compiler.
 #define PALETTE_STEPS 24
 #define PALETTE_INVSTEP (1.0 / 23.0) /* 1/(PALETTE_STEPS-1); keep in sync */
 
-// Sample the palette curve in OKLab (L,a,b) — for matching, not display.
-#define PaletteLab(pal, t) (tex3D(sampler_fc_palette_lab, float3(saturate(t), frac(pal), (floor(pal) + 0.5) / 7.0)).rgb)
+// Sample the palette in OKLab (L,a,b) at row knob — for matching, not display.
+#define PaletteLab(knob, t) (tex2D(sampler_fc_palette_lab, float2(saturate(t), saturate(knob))).rgb)
 
 // --- sRGB <-> OKLab (Bjorn Ottosson), matching ColorPalette.cpp. Gamma is piecewise but done
 //     branchlessly (step+lerp); pow() bases are guarded >= 0 for out-of-[0,1] feedback colors. ---
@@ -270,32 +270,33 @@ float PaletteDistLab(float3 labA, float3 labB)
     return dot(dab, dab) + PALETTE_LUMA_W * dL * dL;
 }
 
-// Nearest point on the palette curve to OKLab color cLab. Returns (lab = on-curve, a = distance).
-float4 PaletteNearestLab(float pal, float3 cLab)
+// Nearest point on the palette (value axis, at row knob) to OKLab color cLab. Returns
+// (lab = on-curve, a = distance).
+float4 PaletteNearestLab(float knob, float3 cLab)
 {
     float3 best = cLab;
     float bestd = 100.0; // larger than any PaletteDistLab
     for (int i = 0; i < PALETTE_STEPS; i++)
     {
-        float3 pl = PaletteLab(pal, i * PALETTE_INVSTEP);
+        float3 pl = PaletteLab(knob, i * PALETTE_INVSTEP);
         float d = PaletteDistLab(cLab, pl);
         if (d < bestd) { bestd = d; best = pl; }
     }
     return float4(best, sqrt(bestd));
 }
 
-// Hard gradient-map: move c toward its nearest palette color by amount (0 = unchanged, 1 = on
-// curve). Matching + blend are perceptual (OKLab); result converted back to sRGB once.
-float3 PaletteSnap(float pal, float3 c, float amount)
+// Hard gradient-map: move c toward its nearest palette color (at row knob) by amount (0 = unchanged,
+// 1 = on curve). Matching + blend are perceptual (OKLab); result converted back to sRGB once.
+float3 PaletteSnap(float knob, float3 c, float amount)
 {
     float3 cLab = PaletteSrgbToLab(c);
-    float3 nLab = PaletteNearestLab(pal, cLab).rgb;
+    float3 nLab = PaletteNearestLab(knob, cLab).rgb;
     return PaletteLabToSrgb(lerp(cLab, nLab, amount));
 }
 
-// Soft gradient-map: inverse-distance-weighted blend over the whole curve (no nearest-point pop),
-// blended in OKLab so it stays vivid. sigma is the OKLab falloff width (larger = smoother/duotone).
-float3 PalettePull(float pal, float3 c, float amount, float sigma)
+// Soft gradient-map: inverse-distance-weighted blend over the value axis (at row knob; no
+// nearest-point pop), blended in OKLab so it stays vivid. sigma is the OKLab falloff width.
+float3 PalettePull(float knob, float3 c, float amount, float sigma)
 {
     float3 cLab = PaletteSrgbToLab(c);
     float3 num = float3(0.0, 0.0, 0.0);
@@ -303,7 +304,7 @@ float3 PalettePull(float pal, float3 c, float amount, float sigma)
     float inv = 1.0 / (2.0 * sigma * sigma);
     for (int i = 0; i < PALETTE_STEPS; i++)
     {
-        float3 pl = PaletteLab(pal, i * PALETTE_INVSTEP);
+        float3 pl = PaletteLab(knob, i * PALETTE_INVSTEP);
         float w = exp(-PaletteDistLab(cLab, pl) * inv);
         num += w * pl;
         den += w;

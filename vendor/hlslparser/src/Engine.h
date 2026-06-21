@@ -60,6 +60,11 @@ int String_ToInteger(const char * str, char ** end);
 void Log_Error(const char * format, ...);
 void Log_ErrorArgList(const char * format, va_list args);
 
+// Error capture: Log_Error() appends its formatted text to a thread-local buffer. Clear it before
+// a parse/generate, then read it after a failure to surface the exact diagnostic (token + line).
+void Log_ClearError();
+const char * Log_GetLastError();
+
 
 // Engine/Array.h
 

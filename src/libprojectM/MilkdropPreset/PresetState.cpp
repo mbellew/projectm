@@ -36,6 +36,17 @@ PresetState::~PresetState()
 void PresetState::Initialize(PresetFileParser& parsedFile)
 {
 
+    // Color palette: declared in the header (the eval parser has no string constants), resolved
+    // once here and fixed for the preset's lifetime. PALETTE_NAME is a built-in family name or a
+    // comma list (choose one at load). PALETTE_SMOOTH sets both blur axes; _H/_V override per axis.
+    {
+        const std::string paletteName = parsedFile.GetString("PALETTE_NAME", "");
+        const float paletteSmooth = parsedFile.GetFloat("PALETTE_SMOOTH", 0.0f);
+        const float paletteSmoothH = parsedFile.GetFloat("PALETTE_SMOOTH_H", paletteSmooth);
+        const float paletteSmoothV = parsedFile.GetFloat("PALETTE_SMOOTH_V", paletteSmooth);
+        palette.Resolve(paletteName, paletteSmoothH, paletteSmoothV);
+    }
+
     // General:
     decay = parsedFile.GetFloat("fDecay", decay);
     /*FLOATBUF*/ alphaInit = parsedFile.GetFloat("fAlphaInit", alphaInit);            // initial pattern A-channel (per-pixel state) value

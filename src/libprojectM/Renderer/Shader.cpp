@@ -71,8 +71,8 @@ void Shader::CompileProgram(const std::string& vertexShaderSource,
 
     std::string linkError = "[Shader] Error linking compiled shader program: " + std::string(message.data());
     LOG_ERROR(linkError);
-    LOG_DEBUG("[Shader] Vertex shader source: " + vertexShaderSource);
-    LOG_DEBUG("[Shader] Fragment shader source: " + fragmentShaderSource);
+    LOG_ERROR("[Shader] Vertex shader source (line-numbered):\n" + NumberSourceLines(vertexShaderSource));
+    LOG_ERROR("[Shader] Fragment shader source (line-numbered):\n" + NumberSourceLines(fragmentShaderSource));
     throw ShaderException(linkError);
 }
 

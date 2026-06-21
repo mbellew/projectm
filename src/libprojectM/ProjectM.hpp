@@ -348,12 +348,6 @@ private:
 
     auto GetRenderContext() -> Renderer::RenderContext;
 
-    /** @brief The curated-palette sRGB LUT texture (baked once, lazily), registered as "palette". */
-    auto PaletteLutTexture() -> const std::shared_ptr<Renderer::Texture>&;
-
-    /** @brief The curated-palette OKLab LUT (baked once, lazily), registered as "palette_lab". */
-    auto PaletteLabLutTexture() -> const std::shared_ptr<Renderer::Texture>&;
-
     uint32_t m_meshX{32};            //!< Per-point mesh horizontal resolution.
     uint32_t m_meshY{24};            //!< Per-point mesh vertical resolution.
     uint32_t m_targetFps{35};        //!< Target frames per second.
@@ -394,8 +388,6 @@ private:
     std::unique_ptr<TimeKeeper> m_timeKeeper;                                     //!< Keeps the different timers used to render and switch presets.
     std::unique_ptr<UserSprites::SpriteManager> m_spriteManager;                  //!< Manages all types of user sprites.
     std::unique_ptr<Renderer::VideoTexture> m_videoTexture;                       //!< 3D ring-buffer texture for app-provided video frames.
-    std::shared_ptr<Renderer::Texture> m_paletteLut;                              //!< Curated-palette sRGB 3D LUT (sampler_fc_palette); baked lazily.
-    std::shared_ptr<Renderer::Texture> m_paletteLabLut;                           //!< Curated-palette OKLab 3D LUT (sampler_fc_palette_lab) for perceptual snap/pull.
     // App-global video settings persist here (not just on the texture) so they
     // survive (re)creation of m_videoTexture in VideoConfigure, independent of
     // the order in which the app calls configure vs. the setters.

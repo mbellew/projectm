@@ -69,6 +69,8 @@ add_library(MilkdropPreset OBJECT
         MilkdropStaticShaders.hpp.in
         MotionVectors.cpp
         MotionVectors.hpp
+        Palette.cpp
+        Palette.hpp
         PaletteEvalFunctions.cpp
         PaletteEvalFunctions.hpp
         PerFrameContext.cpp

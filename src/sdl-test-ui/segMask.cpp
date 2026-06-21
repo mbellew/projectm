@@ -26,6 +26,9 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <system_error>
+#include <unordered_map>
 
 namespace {
 
@@ -271,7 +274,22 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
         {
             try
             {
-                Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_CoreML(options, 0));
+                // Cache the compiled CoreML model. The first launch still pays the multi-second
+                // graph compile, but it writes the result to ModelCacheDirectory and every later
+                // launch loads the cached .mlmodelc instead (sub-second). ORT keys the cache on the
+                // model + EP options, so it self-invalidates if either changes. Requires the newer
+                // string-options CoreML API (ORT >= 1.21) and the MLProgram format. The cache lives
+                // next to the model so it travels with the models directory.
+                const std::filesystem::path cacheDir =
+                    std::filesystem::path(modelPath).parent_path() / "coreml_cache";
+                std::error_code ec;
+                std::filesystem::create_directories(cacheDir, ec);
+                const std::unordered_map<std::string, std::string> coremlOptions{
+                    {"ModelFormat", "MLProgram"},
+                    {"MLComputeUnits", "ALL"},
+                    {"ModelCacheDirectory", cacheDir.string()},
+                };
+                options.AppendExecutionProvider("CoreML", coremlOptions);
             }
             catch (const std::exception& e)
             {

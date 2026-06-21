@@ -12,10 +12,10 @@
 namespace libprojectM {
 namespace MilkdropPreset {
 
-PerPixelContext::PerPixelContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100])
+PerPixelContext::PerPixelContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette)
     : perPixelCodeContext(projectm_eval_context_create(gmegabuf, globalRegisters))
 {
-    RegisterPaletteFunctions(perPixelCodeContext);
+    RegisterPaletteFunctions(perPixelCodeContext, palette);
 }
 
 PerPixelContext::~PerPixelContext()

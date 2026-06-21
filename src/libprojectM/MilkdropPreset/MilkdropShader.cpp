@@ -5,6 +5,7 @@
 
 #include <MilkdropStaticShaders.hpp>
 
+#include <Engine.h> // M4::Log_ClearError / Log_GetLastError (captured hlslparser diagnostics)
 #include <GLSLGenerator.h>
 #include <HLSLParser.h>
 #include <Logging.hpp>
@@ -13,13 +14,56 @@
 #include <glm/mat4x4.hpp>
 
 #include <algorithm>
+#include <iomanip>
 #include <regex>
 #include <set>
+#include <sstream>
 
 namespace libprojectM {
 namespace MilkdropPreset {
 
 using libprojectM::MilkdropPreset::MilkdropStaticShaders;
+
+namespace {
+// Prefix each source line with its number ("  12 | ..."), so a transpiler/driver "line N"
+// diagnostic maps directly onto the dumped source.
+auto NumberShaderLines(const std::string& source) -> std::string
+{
+    std::istringstream input(source);
+    std::ostringstream output;
+    std::string line;
+    int lineNumber = 1;
+    while (std::getline(input, line))
+    {
+        output << std::setw(4) << lineNumber++ << " | " << line << '\n';
+    }
+    return output.str();
+}
+
+// Throw a verbose ShaderException for a failed HLSL->GLSL transpile stage. hlslparser reports the
+// precise cause (offending token, line, expected type) via Log_Error, which we capture; include it
+// in the summary, and log the line-numbered source that failed at ERROR so the offending line is
+// visible without enabling debug logging. The concise summary is what the catch sites re-log.
+[[noreturn]] void ThrowTranspileError(const std::string& shaderType, const std::string& stage,
+                                      const std::string& failedSource)
+{
+    std::string summary = "[MilkdropShader] " + shaderType + " shader: " + stage + " failed";
+    const std::string parserDiagnostic = M4::Log_GetLastError();
+    if (!parserDiagnostic.empty())
+    {
+        summary += ": " + parserDiagnostic;
+    }
+    // Trim trailing newlines the parser may append, keeping the summary a single clean line.
+    while (!summary.empty() && (summary.back() == '\n' || summary.back() == '\r'))
+    {
+        summary.pop_back();
+    }
+
+    LOG_ERROR(summary + "\n--- failed " + shaderType + " shader source (line-numbered) ---\n" +
+              NumberShaderLines(failedSource));
+    throw Renderer::ShaderException(summary);
+}
+} // namespace
 
 static auto floatRand = []() { return static_cast<float>(rand() % 7381) / 7380.0f; };
 
@@ -80,6 +124,21 @@ void MilkdropShader::LoadTexturesAndCompile(PresetState& presetState)
                                                     name,
                                                     "main");
             m_mainTextureDescriptors.push_back(std::move(desc));
+            continue;
+        }
+
+        // The color palette is preset-specific (PALETTE_NAME), baked once into per-preset 2D LUTs
+        // (sRGB for Palette()/PaletteMap, OKLab for snap/pull). Bound here like "main" rather than
+        // via TextureManager. Resolved+fixed at load; the bake happens lazily on this (GL) thread.
+        if (lowerCaseName == "palette" || lowerCaseName == "palette_lab")
+        {
+            const auto& texture = (lowerCaseName == "palette") ? presetState.palette.SrgbTexture()
+                                                               : presetState.palette.LabTexture();
+            Renderer::TextureSamplerDescriptor desc(texture,
+                                                    presetState.renderContext.textureManager->GetSampler(name),
+                                                    name,
+                                                    baseName);
+            m_textureSamplerDescriptors.push_back(std::move(desc));
             continue;
         }
 
@@ -691,10 +750,10 @@ void MilkdropShader::TranspileHLSLShader(const PresetState& presetState, std::st
 
     // Preprocess define macros
     std::string sourcePreprocessed;
+    M4::Log_ClearError();
     if (!parser.ApplyPreprocessor("", program.c_str(), program.size(), sourcePreprocessed))
     {
-        LOG_DEBUG("[MilkdropShader] Failed " + shaderTypeString + " shader code:\n" + program);
-        throw Renderer::ShaderException("Error translating HLSL " + shaderTypeString + " shader: Preprocessing failed.");
+        ThrowTranspileError(shaderTypeString, "preprocessing", program);
     }
 
     // Remove previous shader declarations
@@ -745,21 +804,19 @@ void MilkdropShader::TranspileHLSLShader(const PresetState& presetState, std::st
 
     // Transpile from HLSL (aka preset shader aka DirectX shader) to GLSL (aka OpenGL shader lang)
     // First, parse HLSL into a tree
+    M4::Log_ClearError();
     if (!parser.Parse("", sourcePreprocessed.c_str(), sourcePreprocessed.size()))
     {
-        LOG_DEBUG("[MilkdropShader] Failed " + shaderTypeString + " shader code:\n" + program);
-        LOG_DEBUG("[MilkdropShader] Failed preprocessed " + shaderTypeString + " shader code:\n" + sourcePreprocessed);
-        throw Renderer::ShaderException("[MilkdropShader] Error translating HLSL " + shaderTypeString + " shader: HLSL parsing failed.");
+        ThrowTranspileError(shaderTypeString, "HLSL parse", sourcePreprocessed);
     }
 
     // Then generate GLSL from the resulting parser tree
+    M4::Log_ClearError();
     if (!generator.Generate(&tree, M4::GLSLGenerator::Target_FragmentShader,
                             MilkdropStaticShaders::Get()->GetGlslGeneratorVersion(),
                             "PS", M4::GLSLGenerator::Options(M4::GLSLGenerator::Flag_AlternateNanPropagation)))
     {
-        LOG_DEBUG("[MilkdropShader] Failed " + shaderTypeString + " shader code:\n" + program);
-        LOG_DEBUG("[MilkdropShader] Failed preprocessed " + shaderTypeString + " shader code:\n" + sourcePreprocessed);
-        throw Renderer::ShaderException("[MilkdropShader] Error translating HLSL " + shaderTypeString + " shader: GLSL generating failed.\nSource:\n" + sourcePreprocessed);
+        ThrowTranspileError(shaderTypeString, "GLSL generation", sourcePreprocessed);
     }
 
     LOG_TRACE("[MilkdropShader] Transpiled GLSL " + shaderTypeString + " shader code:\n" + std::string(generator.GetResult()));
@@ -791,10 +848,10 @@ void MilkdropShader::TranspileVideoShader(std::string& program)
 
     // Preprocess define macros
     std::string sourcePreprocessed;
+    M4::Log_ClearError();
     if (!parser.ApplyPreprocessor("", program.c_str(), program.size(), sourcePreprocessed))
     {
-        LOG_DEBUG("[MilkdropShader] Failed video shader code:\n" + program);
-        throw Renderer::ShaderException("Error translating HLSL video shader: Preprocessing failed.");
+        ThrowTranspileError("video", "preprocessing", program);
     }
 
     // Strip any sampler / texsize declarations the author left in the body; the preprocess pass
@@ -820,20 +877,18 @@ void MilkdropShader::TranspileVideoShader(std::string& program)
         "uniform sampler3D sampler_fc_palette;\n"
         "uniform sampler3D sampler_fc_palette_lab;\n");
 
+    M4::Log_ClearError();
     if (!parser.Parse("", sourcePreprocessed.c_str(), sourcePreprocessed.size()))
     {
-        LOG_DEBUG("[MilkdropShader] Failed video shader code:\n" + program);
-        LOG_DEBUG("[MilkdropShader] Failed preprocessed video shader code:\n" + sourcePreprocessed);
-        throw Renderer::ShaderException("[MilkdropShader] Error translating HLSL video shader: HLSL parsing failed.");
+        ThrowTranspileError("video", "HLSL parse", sourcePreprocessed);
     }
 
+    M4::Log_ClearError();
     if (!generator.Generate(&tree, M4::GLSLGenerator::Target_FragmentShader,
                             MilkdropStaticShaders::Get()->GetGlslGeneratorVersion(),
                             "PS", M4::GLSLGenerator::Options(M4::GLSLGenerator::Flag_AlternateNanPropagation)))
     {
-        LOG_DEBUG("[MilkdropShader] Failed video shader code:\n" + program);
-        LOG_DEBUG("[MilkdropShader] Failed preprocessed video shader code:\n" + sourcePreprocessed);
-        throw Renderer::ShaderException("[MilkdropShader] Error translating HLSL video shader: GLSL generating failed.\nSource:\n" + sourcePreprocessed);
+        ThrowTranspileError("video", "GLSL generation", sourcePreprocessed);
     }
 
     LOG_TRACE("[MilkdropShader] Transpiled GLSL video shader code:\n" + std::string(generator.GetResult()));

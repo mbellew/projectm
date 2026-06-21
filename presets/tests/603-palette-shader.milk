@@ -1,0 +1,23 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=3
+PSVERSION_WARP=3
+PSVERSION_COMP=3
+PALETTE_NAME=neon
+fDecay=0.5
+comp_1=```
+shader_body
+{
+    // Left half: the raw per-preset palette LUT, x = value t, y = knob (V). Right half: a test
+    // color field snapped to the palette (exercises the OKLab sampler_fc_palette_lab path).
+    if (uv.x < 0.5)
+    {
+        ret = Palette(uv.y, uv.x * 2.0);
+    }
+    else
+    {
+        float3 field_ = float3((uv.x - 0.5) * 2.0, uv.y, 0.5 - uv.y * 0.5);
+        ret = PaletteSnap(uv.y, field_, 1.0);
+    }
+}
+```
