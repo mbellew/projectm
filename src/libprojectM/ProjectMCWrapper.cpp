@@ -188,6 +188,22 @@ void projectm_set_texture_search_paths(projectm_handle instance,
     projectMInstance->SetTexturePaths(texturePaths);
 }
 
+void projectm_set_palette_search_paths(projectm_handle instance,
+                                       const char** palette_search_paths,
+                                       size_t count)
+{
+    auto projectMInstance = handle_to_instance(instance);
+
+    std::vector<std::string> palettePaths;
+    palettePaths.reserve(count);
+    for (size_t index = 0; index < count; index++)
+    {
+        palettePaths.emplace_back(palette_search_paths[index]);
+    }
+
+    projectMInstance->SetPaletteSearchPaths(palettePaths);
+}
+
 void projectm_reset_textures(projectm_handle instance)
 {
     auto projectMInstance = handle_to_instance(instance);

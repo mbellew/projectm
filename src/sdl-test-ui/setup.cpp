@@ -392,6 +392,24 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
             }
             projectm_set_texture_search_paths(projectMHandle, texturePathPtrs.data(), texturePathPtrs.size());
         }
+
+        // Palette image search path(s) for the PALETTE_NAME preset key. ';'-separated, "~" expands
+        // to $HOME. A palette named "foo" loads "foo.png/.jpg" from here, else a built-in family.
+        std::vector<std::string> palettePaths = splitPreferenceList(config.read<std::string>("Palette Path", std::string()));
+        for (auto& path : palettePaths)
+        {
+            path = expandTilde(path);
+        }
+        if (!palettePaths.empty())
+        {
+            std::vector<const char*> palettePathPtrs;
+            palettePathPtrs.reserve(palettePaths.size());
+            for (const auto& path : palettePaths)
+            {
+                palettePathPtrs.push_back(path.c_str());
+            }
+            projectm_set_palette_search_paths(projectMHandle, palettePathPtrs.data(), palettePathPtrs.size());
+        }
     }
 
     // CLI --fullscreen/--windowed overrides the config value (-1 = leave config value).

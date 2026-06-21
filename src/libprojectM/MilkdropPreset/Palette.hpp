@@ -18,6 +18,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace libprojectM {
 namespace MilkdropPreset {
@@ -32,10 +33,13 @@ public:
      * @brief Resolves the palette from the PALETTE_NAME spec + smoothing radii. Frozen afterwards.
      * @param nameSpec A built-in family name, or a comma-separated list from which one is chosen at
      *                 random (re-rolled each load). Empty / unknown falls back to a default family.
-     * @param smoothH Horizontal (value-axis) smoothing radius. Stored now, applied once images land.
+     * @param smoothH Horizontal (value-axis) smoothing radius, as a fraction of the axis.
      * @param smoothV Vertical (knob-axis) smoothing radius.
+     * @param searchPaths Directories searched for an image file `<name>.{png,jpg,...}`; a match wins
+     *                    over the built-in family of the same name. Empty = built-ins only.
      */
-    void Resolve(const std::string& nameSpec, float smoothH, float smoothV);
+    void Resolve(const std::string& nameSpec, float smoothH, float smoothV,
+                 const std::vector<std::string>& searchPaths);
 
     /**
      * @brief Samples the palette. @a knob = family tweak / image row (V), @a t = value (U). Clamped.
@@ -53,9 +57,14 @@ public:
     auto LabTexture() -> const std::shared_ptr<Renderer::Texture>&;
 
 private:
-    Renderer::ColorPalette::Family m_family{Renderer::ColorPalette::Family::Pastel};
     float m_smoothH{0.0f};
     float m_smoothV{0.0f};
+
+    // The CPU pixel buffer is the single source of truth: built-ins bake into it from ColorPalette,
+    // image palettes decode into it, smoothing is applied to it, and both Sample() (eval) and the
+    // GPU LUTs read from it — so eval and shader colors can't drift. sRGB, LutHeight rows of
+    // LutWidth texels, 3 floats each (row-major: idx = (y*LutWidth + x)*3).
+    std::vector<float> m_srgb;
 
     std::shared_ptr<Renderer::Texture> m_srgbTexture; //!< Lazily baked 2D RGBA8 LUT (display).
     std::shared_ptr<Renderer::Texture> m_labTexture;  //!< Lazily baked 2D RGBA16F LUT (OKLab, snap/pull).

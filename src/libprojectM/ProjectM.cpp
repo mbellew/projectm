@@ -102,6 +102,12 @@ void ProjectM::SetTexturePaths(std::vector<std::string> texturePaths)
     }
 }
 
+void ProjectM::SetPaletteSearchPaths(std::vector<std::string> paletteSearchPaths)
+{
+    // Read at preset load via RenderContext::paletteSearchPaths; new presets pick up changes.
+    m_paletteSearchPaths = std::move(paletteSearchPaths);
+}
+
 void ProjectM::ResetTextures()
 {
     m_textureManager = std::make_unique<Renderer::TextureManager>(m_textureSearchPaths);
@@ -685,6 +691,7 @@ auto ProjectM::GetRenderContext() -> Renderer::RenderContext
 
     ctx.textureManager = m_textureManager.get();
     ctx.shaderCache = m_shaderCache.get();
+    ctx.paletteSearchPaths = &m_paletteSearchPaths;
     ctx.videoTexture = m_videoTexture.get();
     if (m_videoTexture)
     {
