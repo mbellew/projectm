@@ -79,6 +79,7 @@ deploy-macos: build
 deploy-linux: build
     sudo BUILD_DIR={{justfile_directory()}}/{{build_dir}} ONNX_PREFIX={{onnx_prefix}} \
         CUDA_RUNTIME_DIR={{cuda_runtime_dir}} MODELS_DIR={{env_var('HOME')}}/.projectM/models \
+        TEXTURES_DIR={{env_var('HOME')}}/.projectM/textures \
         {{justfile_directory()}}/deploy/deploy-linux.sh
 
 # Install the built macOS bundle into an appliance user's home + seed ~/.projectM (needs sudo).

@@ -20,6 +20,7 @@
 #   ONNX_PREFIX        onnxruntime prefix         (default: $HOME/.local/onnxruntime)
 #   CUDA_RUNTIME_DIR   CUDA/cuDNN runtime libs    (default: $HOME/.local/cuda-runtime/lib)
 #   MODELS_DIR         *.onnx seg/depth models    (default: $HOME/.projectM/models)
+#   TEXTURES_DIR       image-sampler textures     (default: $HOME/.projectM/textures)
 #   PRESETS_DIR        .milk presets to ship      (default: <repo>/presets/video)
 #   INCLUDE_MODELS     0 to skip copying models   (default: 1)
 #
@@ -38,6 +39,7 @@ BUILD_DIR="${BUILD_DIR:-${REPO_ROOT}/cmake-build-linux}"
 ONNX_PREFIX="${ONNX_PREFIX:-${HOME}/.local/onnxruntime}"
 CUDA_RUNTIME_DIR="${CUDA_RUNTIME_DIR:-${HOME}/.local/cuda-runtime/lib}"
 MODELS_DIR="${MODELS_DIR:-${HOME}/.projectM/models}"
+TEXTURES_DIR="${TEXTURES_DIR:-${HOME}/.projectM/textures}"
 PRESETS_DIR="${PRESETS_DIR:-${REPO_ROOT}/presets/video}"
 INCLUDE_MODELS="${INCLUDE_MODELS:-1}"
 
@@ -51,6 +53,7 @@ note "binary   : ${BIN_SRC}"
 note "onnx     : ${ONNX_PREFIX}/lib"
 note "cuda     : ${CUDA_RUNTIME_DIR}"
 note "models   : ${MODELS_DIR} (include=${INCLUDE_MODELS})"
+note "textures : ${TEXTURES_DIR}"
 note "presets  : ${PRESETS_DIR}"
 
 # Fail early with a friendly message if the target needs root.
@@ -60,7 +63,7 @@ if [[ ! -e "${OUT_DIR}" && ! -w "${parent}" ]] || [[ -e "${OUT_DIR}" && ! -w "${
 fi
 
 mkdir -p "${OUT_DIR}/bin" "${OUT_DIR}/lib" \
-         "${OUT_DIR}/share/projectm/presets/video" "${OUT_DIR}/models"
+         "${OUT_DIR}/share/projectm/presets/video" "${OUT_DIR}/models" "${OUT_DIR}/textures"
 
 # 1. Binary.
 note "copying binary..."
@@ -97,6 +100,14 @@ if [[ "${INCLUDE_MODELS}" == "1" && -d "${MODELS_DIR}" ]]; then
     note "warning: no *.onnx in ${MODELS_DIR}"
 else
   note "skipping models (INCLUDE_MODELS=${INCLUDE_MODELS})."
+fi
+
+# 4b. Textures for image samplers (config.inp's "Texture Path" points here).
+if [[ -d "${TEXTURES_DIR}" ]] && compgen -G "${TEXTURES_DIR}/*" >/dev/null; then
+  note "copying textures..."
+  cp -a "${TEXTURES_DIR}/." "${OUT_DIR}/textures/"
+else
+  note "no textures in ${TEXTURES_DIR} (skipping)."
 fi
 
 # 5. Launcher wrapper (derives its prefix from its own location at runtime).

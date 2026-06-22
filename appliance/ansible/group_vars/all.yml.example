@@ -55,8 +55,10 @@ projectm_seg_quality: 2
 # projectm_seg_harden_lo: 0.0
 # projectm_seg_harden_hi: 1.0
 
-# Texture search path ("~" expands to $HOME; the deploy bundle seeds ~/.projectM/textures).
+# Texture search path ("~" expands to $HOME; the macOS deploy bundle seeds ~/.projectM/textures).
 projectm_texture_path: "~/.projectM/textures"
+# Linux /opt bundle ships textures under the tree (deploy-linux.sh copies ~/.projectM/textures):
+# projectm_texture_path: "/opt/projectm/textures"
 
 # Optional extra projectM config values (defaults shown).
 projectm_fps: 60
