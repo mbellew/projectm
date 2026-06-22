@@ -246,12 +246,22 @@ struct SegMasker::Impl
     float normBias{-1.0f};
     float downsampleRatio{1.0f};
 
-    // RVM recurrent state (r1i..r4i), carried frame to frame.
+    // RVM recurrent state (r1i..r4i), carried frame to frame. When running on the CUDA EP these
+    // are kept device-resident (see binding) so they never round-trip to host between frames.
     std::vector<Ort::Value> recurrent;
     float ratioVal{1.0f};
 
     std::vector<float> inputBuf;        // src CHW
     std::vector<uint8_t> rgbBuf;        // interleaved RGB output frame
+
+    // --- CUDA execution-provider I/O binding (see Load) -----------------------------------------
+    // When the CUDA EP is active we drive Run() through an IoBinding instead of plain input/output
+    // arrays. This lets RVM's recurrent hidden state stay on the GPU frame-to-frame (it is computed
+    // and consumed on-device and never read by the CPU), and lets the matte land in pinned host
+    // memory for a faster device->host copy. Off (false) on CPU/CoreML — the host path is unchanged.
+    bool useCuda{false};
+    int cudaDevice{0};
+    std::unique_ptr<Ort::IoBinding> binding;
 };
 
 SegMasker::SegMasker()
@@ -317,6 +327,8 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
                 cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
                 cudaOptions.do_copy_in_default_stream = 1;
                 options.AppendExecutionProvider_CUDA(cudaOptions);
+                m_impl->useCuda = true;
+                m_impl->cudaDevice = cudaOptions.device_id;
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                             "[SegMasker] Using CUDA execution provider (device %d).",
                             cudaOptions.device_id);
@@ -330,6 +342,13 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
 #endif
 
         m_impl->session = std::make_unique<Ort::Session>(m_impl->env, modelPath.c_str(), options);
+
+        // IoBinding is only used when the CUDA EP actually loaded. If session creation succeeded but
+        // CUDA didn't (we fell back to CPU), keep useCuda false so the plain host Run path is used.
+        if (m_impl->useCuda)
+        {
+            m_impl->binding = std::make_unique<Ort::IoBinding>(*m_impl->session);
+        }
 
         const size_t nIn = m_impl->session->GetInputCount();
         const size_t nOut = m_impl->session->GetOutputCount();
@@ -736,7 +755,69 @@ void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
 
     try
     {
-        if (m_impl->rvm)
+        if (m_impl->rvm && m_impl->useCuda)
+        {
+            // CUDA path: drive Run() through the IoBinding so RVM's recurrent state stays on the
+            // GPU. r*i are bound from the device tensors produced as last frame's r*o (zero-filled
+            // host tensors on the first frame; ORT copies those up once), and r*o are bound back to
+            // CUDA device memory — so the hidden state never round-trips to host. Only the matte
+            // (pha) is read back to the CPU for compositing.
+            m_impl->ratioVal = m_impl->downsampleRatio;
+            const std::array<int64_t, 1> ratioShape{1};
+            Ort::Value ratioTensor = Ort::Value::CreateTensor<float>(
+                memInfo, &m_impl->ratioVal, 1, ratioShape.data(), ratioShape.size());
+
+            auto& b = *m_impl->binding;
+            b.ClearBoundInputs();
+            b.ClearBoundOutputs();
+            for (const auto& name : m_impl->inNames)
+            {
+                if (name == "src")
+                {
+                    b.BindInput(name.c_str(), srcTensor);
+                }
+                else if (name == "downsample_ratio")
+                {
+                    b.BindInput(name.c_str(), ratioTensor);
+                }
+                else // r1i..r4i — device-resident (host zeros only on the first frame)
+                {
+                    const int k = std::clamp(name[1] - '1', 0, 3);
+                    b.BindInput(name.c_str(), m_impl->recurrent[k]);
+                }
+            }
+            // pha -> host (read back for compositing); r*o -> CUDA device (kept for next frame).
+            const Ort::MemoryInfo cudaMem("Cuda", OrtArenaAllocator, m_impl->cudaDevice, OrtMemTypeDefault);
+            const Ort::MemoryInfo phaOut = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeCPUOutput);
+            for (const auto& n : m_impl->outNames)
+            {
+                b.BindOutput(n.c_str(), (n == "pha") ? phaOut : cudaMem);
+            }
+
+            m_impl->session->Run(Ort::RunOptions{nullptr}, b);
+            outputs = b.GetOutputValues(); // in bind order == outNames order
+
+            for (size_t i = 0; i < m_impl->outNames.size() && i < outputs.size(); ++i)
+            {
+                const std::string& n = m_impl->outNames[i];
+                if (n == "pha")
+                {
+                    matte = outputs[i].GetTensorMutableData<float>();
+                    const auto os = outputs[i].GetTensorTypeAndShapeInfo().GetShape();
+                    if (os.size() >= 2)
+                    {
+                        matteH = static_cast<int>(os[os.size() - 2]);
+                        matteW = static_cast<int>(os[os.size() - 1]);
+                    }
+                }
+                else if (n.size() == 3 && n[0] == 'r' && n[2] == 'o')
+                {
+                    const int k = std::clamp(n[1] - '1', 0, 3);
+                    m_impl->recurrent[k] = std::move(outputs[i]); // device -> next frame's r*i
+                }
+            }
+        }
+        else if (m_impl->rvm)
         {
             // Build inputs by name: src / r1i..r4i / downsample_ratio.
             m_impl->ratioVal = m_impl->downsampleRatio;
