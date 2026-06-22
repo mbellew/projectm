@@ -186,6 +186,21 @@ public:
     // matte (thin limbs steadier) but slower. $PROJECTM_SEG_QUALITY overrides.
     void setVideoSegQuality(int quality) { _segQuality = quality; }
 
+    // Optional monocular depth model ("Video Seg Depth Model"): when set, background people
+    // (spectators/passers-by) are dropped from the matte by relative depth. Empty = off.
+    // $PROJECTM_SEG_DEPTH_MODEL overrides it.
+    void setVideoSegDepthModel(const std::string& path) { _segDepthModel = path; }
+
+    // Depth keep band ("Video Seg Depth Band", 0..1): how far behind the nearest person still
+    // counts as "front". Larger keeps more people. <=0 = unset (default 0.20). $PROJECTM_SEG_DEPTH_BAND overrides.
+    void setVideoSegDepthBand(double band) { _segDepthBand = band; }
+
+    // Matte-hardening smoothstep edges ("Video Seg Harden Lo/Hi", 0..1): remap matte alpha so
+    // alpha<=lo->0, alpha>=hi->1 (reduces soft-matte ghosting). lo<=0 && hi>=1 = off (raw matte).
+    // $PROJECTM_SEG_HARDEN_LO / _HI override these.
+    void setVideoSegHardenLo(double lo) { _segHardenLo = lo; }
+    void setVideoSegHardenHi(double hi) { _segHardenHi = hi; }
+
     bool done{false};
     bool mouseDown{false};
     bool wasapi{false};    // Used to track if wasapi is currently active. This bool will allow us to run a WASAPI app and still toggle to microphone inputs.
@@ -239,6 +254,17 @@ private:
 
     // ONNX person-seg quality level ("Video Seg Quality"): 1/2/3 -> 256/384/512; 0 = unset (2).
     int _segQuality{0};
+
+    // Optional monocular depth model ("Video Seg Depth Model") to drop background people from the
+    // matte; empty = off. $PROJECTM_SEG_DEPTH_MODEL overrides.
+    std::string _segDepthModel;
+
+    // Depth keep band ("Video Seg Depth Band", 0..1); <=0 = unset (default 0.20). $PROJECTM_SEG_DEPTH_BAND overrides.
+    double _segDepthBand{0.0};
+
+    // Matte-hardening smoothstep edges ("Video Seg Harden Lo/Hi"); lo<=0 && hi>=1 = off. $PROJECTM_SEG_HARDEN_LO/_HI override.
+    double _segHardenLo{0.0};
+    double _segHardenHi{1.0};
 
     std::string _presetName; //!< Current preset name
 

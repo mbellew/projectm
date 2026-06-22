@@ -373,6 +373,10 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         app->setVideoSegModel2(expandTilde(config.read<std::string>("Video Seg Model 2", std::string())));
         app->setVideoSegCombine(config.read<std::string>("Video Seg Combine", std::string())); // a mode, not a path
         app->setVideoSegQuality(config.read<int>("Video Seg Quality", 0));
+        app->setVideoSegDepthModel(expandTilde(config.read<std::string>("Video Seg Depth Model", std::string())));
+        app->setVideoSegDepthBand(config.read<double>("Video Seg Depth Band", 0.0));
+        app->setVideoSegHardenLo(config.read<double>("Video Seg Harden Lo", 0.0));
+        app->setVideoSegHardenHi(config.read<double>("Video Seg Harden Hi", 1.0));
 
         // Texture search path(s) for image samplers (e.g. sampler_rand00). ';'-separated,
         // "~" expands to $HOME. Without this the library has no search path, so textured

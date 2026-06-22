@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
@@ -127,6 +128,46 @@ void RgbToChwImageNet(const uint8_t* rgb, int srcW, int srcH, int dstW, int dstH
     }
 }
 
+// Bilinear resize of interleaved RGB into a planar CHW float buffer using standard ImageNet
+// preprocessing: scale bytes to [0,1] (divide by 255), then per-channel (x - mean) / std. This
+// is what Depth Anything V2 (and most torchvision/transformers vision models) expect -- distinct
+// from RgbToChwImageNet above, which divides by the per-image max (U²-Net's quirk).
+void RgbToChwImageNetStd(const uint8_t* rgb, int srcW, int srcH, int dstW, int dstH, float* out)
+{
+    static const float mean[3] = {0.485f, 0.456f, 0.406f};
+    static const float stdv[3] = {0.229f, 0.224f, 0.225f};
+    const float sx = static_cast<float>(srcW) / dstW;
+    const float sy = static_cast<float>(srcH) / dstH;
+    const int plane = dstW * dstH;
+    for (int y = 0; y < dstH; ++y)
+    {
+        const float fy = (y + 0.5f) * sy - 0.5f;
+        const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, srcH - 1);
+        const int y1 = std::min(y0 + 1, srcH - 1);
+        const float wy = std::clamp(fy - y0, 0.0f, 1.0f);
+        for (int x = 0; x < dstW; ++x)
+        {
+            const float fx = (x + 0.5f) * sx - 0.5f;
+            const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, srcW - 1);
+            const int x1 = std::min(x0 + 1, srcW - 1);
+            const float wx = std::clamp(fx - x0, 0.0f, 1.0f);
+
+            const uint8_t* p00 = rgb + (static_cast<size_t>(y0) * srcW + x0) * 3;
+            const uint8_t* p01 = rgb + (static_cast<size_t>(y0) * srcW + x1) * 3;
+            const uint8_t* p10 = rgb + (static_cast<size_t>(y1) * srcW + x0) * 3;
+            const uint8_t* p11 = rgb + (static_cast<size_t>(y1) * srcW + x1) * 3;
+            const int dstIdx = y * dstW + x;
+            for (int c = 0; c < 3; ++c)
+            {
+                const float top = p00[c] * (1 - wx) + p01[c] * wx;
+                const float bot = p10[c] * (1 - wx) + p11[c] * wx;
+                const float v = (top * (1 - wy) + bot * wy) / 255.0f;
+                out[c * plane + dstIdx] = (v - mean[c]) / stdv[c];
+            }
+        }
+    }
+}
+
 float SampleMatte(const float* matte, int mw, int mh, float fx, float fy)
 {
     const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, mw - 1);
@@ -221,6 +262,75 @@ float EnvFloat(const char* name, float fallback)
     return (v && v[0]) ? static_cast<float>(std::atof(v)) : fallback;
 }
 
+// Builds SessionOptions with the platform GPU execution provider appended: CoreML (ANE/GPU) on
+// macOS, CUDA on Linux, each honoring the same env switches the seg model uses. On CUDA success,
+// sets useCuda=true and cudaDevice; on any failure it logs and leaves the CPU provider in place.
+// Shared by the seg model (Load) and the depth model (LoadDepth) so both run on the same EP.
+Ort::SessionOptions MakeSessionOptions(const std::string& modelPath, bool& useCuda, int& cudaDevice)
+{
+    Ort::SessionOptions options;
+    options.SetIntraOpNumThreads(2);
+    options.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+#ifdef __APPLE__
+    // CoreML execution provider (ANE/GPU) is macOS-only.
+    if (EnvInt("PROJECTM_SEG_COREML", 1) != 0)
+    {
+        try
+        {
+            // Cache the compiled CoreML model. The first launch still pays the multi-second
+            // graph compile, but it writes the result to ModelCacheDirectory and every later
+            // launch loads the cached .mlmodelc instead (sub-second). ORT keys the cache on the
+            // model + EP options, so it self-invalidates if either changes. Requires the newer
+            // string-options CoreML API (ORT >= 1.21) and the MLProgram format. The cache lives
+            // next to the model so it travels with the models directory.
+            const std::filesystem::path cacheDir =
+                std::filesystem::path(modelPath).parent_path() / "coreml_cache";
+            std::error_code ec;
+            std::filesystem::create_directories(cacheDir, ec);
+            const std::unordered_map<std::string, std::string> coremlOptions{
+                {"ModelFormat", "MLProgram"},
+                {"MLComputeUnits", "ALL"},
+                {"ModelCacheDirectory", cacheDir.string()},
+            };
+            options.AppendExecutionProvider("CoreML", coremlOptions);
+        }
+        catch (const std::exception& e)
+        {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "[SegMasker] CoreML EP unavailable (%s); using CPU.", e.what());
+        }
+    }
+#else
+    // NVIDIA CUDA execution provider. Supplied at runtime by the GPU ONNX Runtime
+    // build (libonnxruntime_providers_cuda.so) when CUDA + cuDNN are present; on a
+    // CPU-only ORT or any missing library the call throws and we fall back to the
+    // CPU provider. Disable explicitly with PROJECTM_SEG_CUDA=0.
+    if (EnvInt("PROJECTM_SEG_CUDA", 1) != 0)
+    {
+        try
+        {
+            OrtCUDAProviderOptions cudaOptions{};
+            cudaOptions.device_id = EnvInt("PROJECTM_SEG_CUDA_DEVICE", 0);
+            cudaOptions.gpu_mem_limit = std::numeric_limits<size_t>::max();
+            cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
+            cudaOptions.do_copy_in_default_stream = 1;
+            options.AppendExecutionProvider_CUDA(cudaOptions);
+            useCuda = true;
+            cudaDevice = cudaOptions.device_id;
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "[SegMasker] Using CUDA execution provider (device %d).",
+                        cudaOptions.device_id);
+        }
+        catch (const std::exception& e)
+        {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "[SegMasker] CUDA EP unavailable (%s); using CPU.", e.what());
+        }
+    }
+#endif
+    return options;
+}
+
 } // namespace
 
 struct SegMasker::Impl
@@ -262,6 +372,31 @@ struct SegMasker::Impl
     bool useCuda{false};
     int cudaDevice{0};
     std::unique_ptr<Ort::IoBinding> binding;
+
+    // --- Monocular depth gate (see LoadDepth / ApplyDepthGate) ----------------------------------
+    // Optional Depth Anything V2 session. When present, after the matte is built we run depth on
+    // the same frame, split the matte into connected components, take each component's median
+    // relative depth, and zero the alpha of components sitting far behind the nearest one --
+    // removing background spectators while keeping everyone up front. Its own session (shares the
+    // GPU EP via MakeSessionOptions); no IoBinding, no recurrent state -- a plain single-shot run.
+    std::unique_ptr<Ort::Session> depthSession;
+    std::vector<std::string> depthInNames;
+    std::vector<std::string> depthOutNames;
+    int depthSize{392};                 // processing long-side (px); snapped to a multiple of 14
+    int depthW{0};                      // per-frame input dims (aspect-matched, multiples of 14)
+    int depthH{0};
+    float depthBand{0.20f};             // keep components within this normalized closeness of the nearest
+    bool depthInvert{false};            // false: larger model output = closer (Depth Anything default)
+    std::vector<float> depthInput;      // CHW input scratch (pixel_values)
+    std::vector<float> depthMap;        // HxW relative depth (copied out of the model)
+    int depthMapW{0};
+    int depthMapH{0};
+    std::vector<int> ccLabel;           // connected-component label per grid cell (-1 = background)
+    std::vector<float> cellWeight;      // per-grid-cell keep weight (1 = keep, 0 = drop)
+
+    // Matte-hardening smoothstep edges (see HardenAlpha). lo<=0 && hi>=1 => disabled (raw matte).
+    float hardenLo{0.0f};
+    float hardenHi{1.0f};
 };
 
 SegMasker::SegMasker()
@@ -280,66 +415,8 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
 {
     try
     {
-        Ort::SessionOptions options;
-        options.SetIntraOpNumThreads(2);
-        options.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
-#ifdef __APPLE__
-        // CoreML execution provider (ANE/GPU) is macOS-only.
-        if (EnvInt("PROJECTM_SEG_COREML", 1) != 0)
-        {
-            try
-            {
-                // Cache the compiled CoreML model. The first launch still pays the multi-second
-                // graph compile, but it writes the result to ModelCacheDirectory and every later
-                // launch loads the cached .mlmodelc instead (sub-second). ORT keys the cache on the
-                // model + EP options, so it self-invalidates if either changes. Requires the newer
-                // string-options CoreML API (ORT >= 1.21) and the MLProgram format. The cache lives
-                // next to the model so it travels with the models directory.
-                const std::filesystem::path cacheDir =
-                    std::filesystem::path(modelPath).parent_path() / "coreml_cache";
-                std::error_code ec;
-                std::filesystem::create_directories(cacheDir, ec);
-                const std::unordered_map<std::string, std::string> coremlOptions{
-                    {"ModelFormat", "MLProgram"},
-                    {"MLComputeUnits", "ALL"},
-                    {"ModelCacheDirectory", cacheDir.string()},
-                };
-                options.AppendExecutionProvider("CoreML", coremlOptions);
-            }
-            catch (const std::exception& e)
-            {
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "[SegMasker] CoreML EP unavailable (%s); using CPU.", e.what());
-            }
-        }
-#else
-        // NVIDIA CUDA execution provider. Supplied at runtime by the GPU ONNX Runtime
-        // build (libonnxruntime_providers_cuda.so) when CUDA + cuDNN are present; on a
-        // CPU-only ORT or any missing library the call throws and we fall back to the
-        // CPU provider. Disable explicitly with PROJECTM_SEG_CUDA=0.
-        if (EnvInt("PROJECTM_SEG_CUDA", 1) != 0)
-        {
-            try
-            {
-                OrtCUDAProviderOptions cudaOptions{};
-                cudaOptions.device_id = EnvInt("PROJECTM_SEG_CUDA_DEVICE", 0);
-                cudaOptions.gpu_mem_limit = std::numeric_limits<size_t>::max();
-                cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
-                cudaOptions.do_copy_in_default_stream = 1;
-                options.AppendExecutionProvider_CUDA(cudaOptions);
-                m_impl->useCuda = true;
-                m_impl->cudaDevice = cudaOptions.device_id;
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "[SegMasker] Using CUDA execution provider (device %d).",
-                            cudaOptions.device_id);
-            }
-            catch (const std::exception& e)
-            {
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "[SegMasker] CUDA EP unavailable (%s); using CPU.", e.what());
-            }
-        }
-#endif
+        Ort::SessionOptions options =
+            MakeSessionOptions(modelPath, m_impl->useCuda, m_impl->cudaDevice);
 
         m_impl->session = std::make_unique<Ort::Session>(m_impl->env, modelPath.c_str(), options);
 
@@ -504,6 +581,58 @@ bool SegMasker::LoadSecondary(const std::string& modelPath, int size, float down
                 "[SegMasker] Secondary model loaded; combine=%s.",
                 m_impl->secondaryGate ? "gate" : "multiply");
     return true;
+}
+
+bool SegMasker::LoadDepth(const std::string& modelPath, int size, float band, bool invert)
+{
+    try
+    {
+        bool dCuda = false; // depth runs single-shot; it doesn't need IoBinding/recurrent state.
+        int dDev = 0;
+        Ort::SessionOptions options = MakeSessionOptions(modelPath, dCuda, dDev);
+        m_impl->depthSession = std::make_unique<Ort::Session>(m_impl->env, modelPath.c_str(), options);
+
+        m_impl->depthInNames.clear();
+        m_impl->depthOutNames.clear();
+        for (size_t i = 0; i < m_impl->depthSession->GetInputCount(); ++i)
+        {
+            m_impl->depthInNames.emplace_back(
+                m_impl->depthSession->GetInputNameAllocated(i, m_impl->alloc).get());
+        }
+        for (size_t i = 0; i < m_impl->depthSession->GetOutputCount(); ++i)
+        {
+            m_impl->depthOutNames.emplace_back(
+                m_impl->depthSession->GetOutputNameAllocated(i, m_impl->alloc).get());
+        }
+
+        // Processing long-side: $PROJECTM_SEG_DEPTH_SIZE > caller > 392. Per-frame W/H are derived
+        // from this and the frame aspect (each snapped to a multiple of 14) in ApplyDepthGate.
+        const int reqSize = (size > 0) ? size : 392;
+        m_impl->depthSize = std::max(14, EnvInt("PROJECTM_SEG_DEPTH_SIZE", reqSize));
+        m_impl->depthBand =
+            std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_BAND", band > 0.0f ? band : 0.20f), 0.0f, 1.0f);
+        m_impl->depthInvert = invert || (EnvInt("PROJECTM_SEG_DEPTH_INVERT", 0) != 0);
+
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[SegMasker] Depth gate loaded '%s' (long-side %d, band %.2f, invert %d).",
+                    modelPath.c_str(), m_impl->depthSize, m_impl->depthBand,
+                    m_impl->depthInvert ? 1 : 0);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "[SegMasker] Depth model '%s' failed to load (%s); depth gate disabled.",
+                    modelPath.c_str(), e.what());
+        m_impl->depthSession.reset();
+        return false;
+    }
+}
+
+void SegMasker::SetHarden(float lo, float hi)
+{
+    m_impl->hardenLo = lo;
+    m_impl->hardenHi = hi;
 }
 
 bool SegMasker::IsLoaded() const
@@ -727,6 +856,8 @@ void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
             }
         }
         multiplySecondary();
+        HardenAlpha(w, h, outRGBA);
+        ApplyDepthGate(w, h, outRGBA);
         return;
     }
 
@@ -937,4 +1068,248 @@ void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
         }
     }
     multiplySecondary();
+    HardenAlpha(w, h, outRGBA);
+    ApplyDepthGate(w, h, outRGBA);
+}
+
+// Contrast-harden the matte alpha through smoothstep(lo, hi, a). RVM (and other matting models)
+// emit soft, partial alpha at edges and uncertain regions, which shows as translucent "ghosting"
+// over a hard composite. Remapping with a steep smoothstep snaps mid values toward 0/1: alpha <= lo
+// becomes fully transparent, alpha >= hi fully opaque, with a smooth ramp between. lo==hi gives a
+// hard threshold. Tuned live via $PROJECTM_SEG_HARDEN_LO / _HI; the default lo=0,hi=1 is a no-op so
+// the raw matte passes through unchanged.
+void SegMasker::HardenAlpha(int w, int h, std::vector<uint8_t>& outRGBA)
+{
+    const float lo = EnvFloat("PROJECTM_SEG_HARDEN_LO", m_impl->hardenLo);
+    const float hi = EnvFloat("PROJECTM_SEG_HARDEN_HI", m_impl->hardenHi);
+    if (lo <= 0.0f && hi >= 1.0f) { return; } // identity -> leave the matte untouched
+    const float span = std::max(hi - lo, 1e-4f); // lo==hi -> near-hard threshold
+    for (int i = 0; i < w * h; ++i)
+    {
+        const float t = std::clamp((outRGBA[i * 4 + 3] / 255.0f - lo) / span, 0.0f, 1.0f);
+        const float a = t * t * (3.0f - 2.0f * t); // smoothstep
+        outRGBA[i * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+    }
+}
+
+// Monocular depth gate: run the depth model on the just-built RGB frame, split the matte into
+// connected components, measure each component's median relative depth, and fade out the alpha of
+// components sitting far behind the nearest one. The whole decision is made on a coarse grid (so a
+// per-pixel-noisy depth map still yields a stable per-person verdict) and applied back to the
+// full-res alpha through a bilinearly-sampled weight grid, which feathers the cut. Relative depth
+// is sufficient -- we only rank components, never use metric distance. See LoadDepth.
+void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
+{
+    auto& I = *m_impl;
+    if (!I.depthSession || w <= 0 || h <= 0) { return; }
+
+    // 1. Depth input dims: aspect-matched to the frame, each snapped to a multiple of 14 (DINOv2
+    //    patch size), long side = depthSize. Resize the scratch only when the dims change.
+    auto snap14 = [](int v) { return std::max(14, (v / 14) * 14); };
+    int dW, dH;
+    if (w >= h) { dW = snap14(I.depthSize); dH = snap14(std::max(1, I.depthSize * h / w)); }
+    else        { dH = snap14(I.depthSize); dW = snap14(std::max(1, I.depthSize * w / h)); }
+    if (dW != I.depthW || dH != I.depthH)
+    {
+        I.depthW = dW;
+        I.depthH = dH;
+        I.depthInput.resize(static_cast<size_t>(3) * dW * dH);
+    }
+
+    // 2. Preprocess (ImageNet) and run the depth model.
+    RgbToChwImageNetStd(I.rgbBuf.data(), w, h, dW, dH, I.depthInput.data());
+    Ort::MemoryInfo memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    const std::array<int64_t, 4> inShape{1, 3, dH, dW};
+    Ort::Value inTensor = Ort::Value::CreateTensor<float>(
+        memInfo, I.depthInput.data(), I.depthInput.size(), inShape.data(), inShape.size());
+
+    std::vector<Ort::Value> outputs;
+    try
+    {
+        const char* inName = I.depthInNames[0].c_str();
+        const char* outName = I.depthOutNames[0].c_str();
+        outputs = I.depthSession->Run(Ort::RunOptions{nullptr}, &inName, &inTensor, 1, &outName, 1);
+    }
+    catch (const std::exception& e)
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "[SegMasker] Depth run failed: %s", e.what());
+        return; // leave the matte unchanged
+    }
+
+    const float* depth = outputs[0].GetTensorMutableData<float>();
+    const auto os = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+    const int mh = (os.size() >= 2) ? static_cast<int>(os[os.size() - 2]) : 0;
+    const int mw = (os.size() >= 2) ? static_cast<int>(os[os.size() - 1]) : 0;
+    if (mw <= 0 || mh <= 0) { return; }
+    I.depthMapW = mw;
+    I.depthMapH = mh;
+
+    // Scene depth span, used to normalize closeness to [0,1] (1 = nearest). Scale-free, so no
+    // calibration: the keep band is a fraction of the full near-to-far spread of the frame.
+    float dmin = depth[0], dmax = depth[0];
+    const int dn = mw * mh;
+    for (int i = 1; i < dn; ++i)
+    {
+        dmin = std::min(dmin, depth[i]);
+        dmax = std::max(dmax, depth[i]);
+    }
+    const float drange = (dmax - dmin) > 1e-6f ? (dmax - dmin) : 1.0f;
+    auto closeness = [&](float v) {
+        return I.depthInvert ? (dmax - v) / drange : (v - dmin) / drange;
+    };
+
+    // 3. Coarse labeling grid (aspect-matched to the frame). Each cell samples the matte alpha
+    //    (foreground?) and the depth map at its center.
+    const int gridLong = std::clamp(EnvInt("PROJECTM_SEG_DEPTH_GRID", 384), 16, 512);
+    int gw, gh;
+    if (w >= h) { gw = gridLong; gh = std::max(1, gridLong * h / w); }
+    else        { gh = gridLong; gw = std::max(1, gridLong * w / h); }
+    const int gn = gw * gh;
+    I.ccLabel.assign(gn, -1);
+    I.cellWeight.assign(gn, 1.0f); // background / kept default = 1 (alpha unchanged)
+
+    const float alphaThresh =
+        std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_ALPHA", 0.5f), 0.0f, 1.0f) * 255.0f;
+    std::vector<float> cellDepth(gn, 0.0f);
+    std::vector<char> cellFg(gn, 0);
+    for (int gy = 0; gy < gh; ++gy)
+    {
+        for (int gx = 0; gx < gw; ++gx)
+        {
+            const int ci = gy * gw + gx;
+            const int px = std::min(w - 1, static_cast<int>((gx + 0.5f) / gw * w));
+            const int py = std::min(h - 1, static_cast<int>((gy + 0.5f) / gh * h));
+            cellFg[ci] = (outRGBA[(static_cast<size_t>(py) * w + px) * 4 + 3] >= alphaThresh) ? 1 : 0;
+            const int dx = std::min(mw - 1, static_cast<int>((gx + 0.5f) / gw * mw));
+            const int dy = std::min(mh - 1, static_cast<int>((gy + 0.5f) / gh * mh));
+            cellDepth[ci] = depth[dy * mw + dx];
+        }
+    }
+
+    // 4. Connected components (4-connectivity) over foreground cells; collect each one's depths.
+    std::vector<std::vector<float>> compDepths;
+    std::vector<int> stack;
+    for (int s = 0; s < gn; ++s)
+    {
+        if (!cellFg[s] || I.ccLabel[s] >= 0) { continue; }
+        const int label = static_cast<int>(compDepths.size());
+        compDepths.emplace_back();
+        stack.clear();
+        stack.push_back(s);
+        I.ccLabel[s] = label;
+        while (!stack.empty())
+        {
+            const int c = stack.back();
+            stack.pop_back();
+            compDepths[label].push_back(cellDepth[c]);
+            const int cx = c % gw, cy = c / gw;
+            const int nb[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (const auto& d : nb)
+            {
+                const int nx = cx + d[0], ny = cy + d[1];
+                if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) { continue; }
+                const int ni = ny * gw + nx;
+                if (cellFg[ni] && I.ccLabel[ni] < 0)
+                {
+                    I.ccLabel[ni] = label;
+                    stack.push_back(ni);
+                }
+            }
+        }
+    }
+    if (compDepths.empty()) { return; } // no people in the matte -> nothing to gate
+
+    // 5. Reference depth = the closeness of the nearest sizable component (the main subject). Using
+    //    a component median, rather than the single nearest pixel, keeps the reference robust to
+    //    stray near specks. Components smaller than minArea are ignored as noise/fragments.
+    const int minArea = std::max(1, EnvInt("PROJECTM_SEG_DEPTH_MINAREA", std::max(4, gn / 400)));
+    std::vector<float> compClose(compDepths.size(), -1.0f); // kept for the debug log
+    float refClose = -1.0f;
+    for (size_t k = 0; k < compDepths.size(); ++k)
+    {
+        auto& v = compDepths[k];
+        if (static_cast<int>(v.size()) < minArea) { continue; }
+        std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+        const float cl = closeness(v[v.size() / 2]);
+        compClose[k] = cl;
+        refClose = std::max(refClose, cl);
+    }
+    if (refClose < 0.0f) { return; } // only noise-sized blobs -> leave the matte unchanged
+
+    // 6. Build a KEEP mask from depth, grow it, then AND it with the matte. Working from "what to
+    //    save" rather than "what to cut" is what guarantees the foreground figure is never eroded.
+    //    A cell is seeded into the keep mask when it sits at, or nearer than, the target depth
+    //    (refClose - band) -- so the subject and anything in front of it are kept, only things
+    //    farther are candidates for removal.
+    const float ramp = std::max(0.02f, I.depthBand * 0.4f);
+    const float keepEdge = refClose - I.depthBand;
+    std::vector<float> keep(gn, 0.0f);
+    for (int c = 0; c < gn; ++c)
+    {
+        const float t = std::clamp((closeness(cellDepth[c]) - (keepEdge - ramp)) / (2.0f * ramp),
+                                   0.0f, 1.0f);
+        keep[c] = t * t * (3.0f - 2.0f * t); // ~1 at/nearer than target, ~0 well behind it
+    }
+
+    // Grow the keep region a few cells (4-neighbour max). This is the crucial step: monocular depth
+    // bleeds across the subject's silhouette, so a thin shell of the subject's own boundary reads
+    // "far" and falls outside the seed -- growing the keep mask covers that shell (and a background
+    // margin) so that AND-ing with the matte below leaves every kept edge defined by the full-res
+    // matte alone, never carved by the coarse depth grid. A far object stays out of the keep mask
+    // unless it sits within `grow` cells of the subject (a touching object keeps a small sliver).
+    const int grow = std::clamp(EnvInt("PROJECTM_SEG_DEPTH_GROW", 1), 0, 12);
+    for (int it = 0; it < grow; ++it)
+    {
+        const std::vector<float> prev = keep;
+        for (int c = 0; c < gn; ++c)
+        {
+            const int cx = c % gw, cy = c / gw;
+            float d = prev[c];
+            if (cx > 0)      { d = std::max(d, prev[c - 1]); }
+            if (cx < gw - 1) { d = std::max(d, prev[c + 1]); }
+            if (cy > 0)      { d = std::max(d, prev[c - gw]); }
+            if (cy < gh - 1) { d = std::max(d, prev[c + gw]); }
+            keep[c] = d;
+        }
+    }
+    // AND with the matte happens in step 7, where alpha is multiplied by this weight.
+    for (int c = 0; c < gn; ++c) { I.cellWeight[c] = keep[c]; }
+
+    // Optional tuning diagnostic ($PROJECTM_SEG_DEPTH_DEBUG=1): every ~60 frames, report the
+    // reference closeness, the keep cutoff, and each sizable component's median closeness. The
+    // main subject sets refClose; components well below the cutoff are the ones being faded. If the
+    // *nearest* component is the one cut, the depth orientation is flipped -- set
+    // PROJECTM_SEG_DEPTH_INVERT=1.
+    if (EnvInt("PROJECTM_SEG_DEPTH_DEBUG", 0) != 0)
+    {
+        static int dbgFrame = 0;
+        if ((dbgFrame++ % 60) == 0)
+        {
+            std::string s;
+            for (size_t k = 0; k < compDepths.size() && k < 12; ++k)
+            {
+                if (compClose[k] < 0.0f) { continue; } // skip tiny/ignored
+                char buf[48];
+                std::snprintf(buf, sizeof(buf), " [%zu: close=%.2f n=%zu]", k, compClose[k],
+                              compDepths[k].size());
+                s += buf;
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "[SegMasker] depth gate: %zu comps, refClose=%.2f, keep>=%.2f;%s",
+                        compDepths.size(), refClose, refClose - I.depthBand, s.c_str());
+        }
+    }
+
+    // 7. Apply: scale full-res alpha by the bilinearly-sampled weight grid (feathers the cut).
+    for (int y = 0; y < h; ++y)
+    {
+        const float gy = (y + 0.5f) / h * gh - 0.5f;
+        for (int x = 0; x < w; ++x)
+        {
+            const float gx = (x + 0.5f) / w * gw - 0.5f;
+            const float wgt = std::clamp(SampleMatte(I.cellWeight.data(), gw, gh, gx, gy), 0.0f, 1.0f);
+            const size_t di = (static_cast<size_t>(y) * w + x) * 4;
+            outRGBA[di + 3] = static_cast<uint8_t>(outRGBA[di + 3] * wgt + 0.5f);
+        }
+    }
 }

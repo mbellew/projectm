@@ -34,6 +34,12 @@ bool SegMasker::LoadSecondary(const std::string& /*modelPath*/, int /*size*/, fl
     return false;
 }
 
+bool SegMasker::LoadDepth(const std::string& /*modelPath*/, int /*size*/, float /*band*/,
+                          bool /*invert*/)
+{
+    return false;
+}
+
 bool SegMasker::IsLoaded() const
 {
     return false;
@@ -41,5 +47,17 @@ bool SegMasker::IsLoaded() const
 
 void SegMasker::Process(const uint8_t* /*bgra*/, int /*w*/, int /*h*/, bool /*mirror*/,
                         std::vector<uint8_t>& /*outRGBA*/)
+{
+}
+
+void SegMasker::ApplyDepthGate(int /*w*/, int /*h*/, std::vector<uint8_t>& /*outRGBA*/)
+{
+}
+
+void SegMasker::HardenAlpha(int /*w*/, int /*h*/, std::vector<uint8_t>& /*outRGBA*/)
+{
+}
+
+void SegMasker::SetHarden(float /*lo*/, float /*hi*/)
 {
 }

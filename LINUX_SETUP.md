@@ -101,6 +101,22 @@ curl -fsSL -o ~/.projectM/models/rvm_mobilenetv3.onnx \
 
 `segMask.cpp` auto-detects RVM by its `downsample_ratio` input. Other supported
 families: MODNet, U²-Net (`*u2net*` filename), YOLOv8/v11-seg (`*yolo*` filename).
+
+### Optional depth model → `~/.projectM/models/depth_anything_v2_vits.onnx`
+
+To drop **background people** (spectators / passers-by) from the matte while keeping
+everyone up front, add a monocular depth model. Depth Anything V2 Small (fp32, ~99 MB):
+
+```shell
+curl -fsSL -o ~/.projectM/models/depth_anything_v2_vits.onnx \
+  https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx
+```
+
+Enable it by pointing `PROJECTM_SEG_DEPTH_MODEL` (or the `Video Seg Depth Model` config
+key) at the file. Each frame the matte is split into connected components, each one's
+median relative depth is measured, and components far behind the nearest are faded out.
+Tune with `PROJECTM_SEG_DEPTH_BAND` (see the env table below). Base (`*vitb*`) is a
+drop-in swap for sharper depth at ~3-4× the cost.
 Override the path with `$PROJECTM_SEG_MODEL`.
 
 ---
@@ -201,6 +217,11 @@ PROJECTM_PRESET_LIST=<(echo presets/tests/401-compshader-video-alpha.milk) \
 | `PROJECTM_SEG_CUDA_DEVICE` | CUDA device index (default 0). |
 | `PROJECTM_SEG_QUALITY` | 1/2/3 → 256/384/512 processing size (default 2). |
 | `PROJECTM_SEG_SIZE` | Raw processing size override (px). |
+| `PROJECTM_SEG_DEPTH_MODEL` | Optional monocular depth model (e.g. `~/.projectM/models/depth_anything_v2_vits.onnx`). When set, background people (spectators/passers-by) are dropped from the matte by relative depth. |
+| `PROJECTM_SEG_DEPTH_BAND` | Keep band (0..1, default 0.20): how far behind the nearest person still counts as "front". Larger keeps more; `0` keeps only the closest. |
+| `PROJECTM_SEG_DEPTH_SIZE` | Depth processing long-side px (default 392, snapped to a multiple of 14). |
+| `PROJECTM_SEG_DEPTH_INVERT` | Set `1` if the depth model outputs larger = farther (Depth Anything is larger = closer, the default). |
+| `PROJECTM_SEG_DEPTH_DEBUG` | `1` logs per-component closeness + keep weight every ~60 frames, for tuning `BAND`. |
 | `PROJECTM_VIDEO_DEVICE` | Camera name substring (case-insensitive); else first usable device. |
 | `PROJECTM_PRESET_PATH` | Directory of presets to load. |
 | `PROJECTM_PRESET_LIST` | File listing presets (one path per line); keeps file order. |

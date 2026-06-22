@@ -217,6 +217,28 @@ void projectMSDL::startVideoCapture()
                     }
                     _segMasker->LoadSecondary(modelPath2, segSize, 0.0f, combine, gate);
                 }
+
+                // Optional monocular depth gate: $PROJECTM_SEG_DEPTH_MODEL > "Video Seg Depth
+                // Model". When set, background people (spectators/passers-by) are dropped from the
+                // matte by relative depth -- keeping everyone up front. Off when no model is given.
+                std::string depthModel;
+                if (const char* env = std::getenv("PROJECTM_SEG_DEPTH_MODEL"); env && env[0])
+                {
+                    depthModel = env;
+                }
+                else if (!_segDepthModel.empty())
+                {
+                    depthModel = _segDepthModel;
+                }
+                if (!depthModel.empty())
+                {
+                    _segMasker->LoadDepth(depthModel, 0, static_cast<float>(_segDepthBand), false);
+                }
+
+                // Matte-hardening smoothstep edges ("Video Seg Harden Lo/Hi"); env overrides apply
+                // inside HardenAlpha. Off by default (lo=0, hi=1) -> raw matte unchanged.
+                _segMasker->SetHarden(static_cast<float>(_segHardenLo),
+                                      static_cast<float>(_segHardenHi));
             }
 
             if (!loaded)

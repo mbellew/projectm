@@ -49,6 +49,31 @@ public:
     bool LoadSecondary(const std::string& modelPath, int size = 0, float downsampleRatio = 0.0f,
                        const std::string& combine = "multiply", float gateThreshold = 0.5f);
 
+    /**
+     * Loads a monocular relative-depth model (Depth Anything V2) used to drop
+     * background people from the matte. After the person matte is computed each
+     * frame, the matte is split into connected components, each component's median
+     * relative depth is measured, and components sitting far behind the nearest one
+     * are removed -- so spectators and passers-by are cut while everyone up front is
+     * kept. Relative depth is sufficient: components are only ranked, never measured.
+     * Call after Load(). No-op family detection; the model is a single RGB input
+     * (ImageNet-normalized) with a single-channel depth output (larger = closer).
+     * @param size   Depth processing long-side in px (snapped to a multiple of 14);
+     *               <=0 = default. $PROJECTM_SEG_DEPTH_SIZE overrides.
+     * @param band   Keep components within this normalized closeness (0..1) of the
+     *               nearest; larger = keep more people behind the front. <=0 = default.
+     * @param invert Set true if the model outputs larger = farther. Default false.
+     * @return true on success.
+     */
+    bool LoadDepth(const std::string& modelPath, int size = 0, float band = 0.0f,
+                   bool invert = false);
+
+    /**
+     * Sets the matte-hardening smoothstep edges (see HardenAlpha). lo<=0 and hi>=1
+     * disables it (raw matte). $PROJECTM_SEG_HARDEN_LO / _HI override these.
+     */
+    void SetHarden(float lo, float hi);
+
     bool IsLoaded() const;
 
     /**
@@ -59,6 +84,21 @@ public:
     void Process(const uint8_t* bgra, int w, int h, bool mirror, std::vector<uint8_t>& outRGBA);
 
 private:
+    /**
+     * Runs the loaded depth model on the last RGB frame and zeroes the alpha of
+     * matte components that sit far behind the nearest one (see LoadDepth). No-op
+     * when no depth model is loaded.
+     */
+    void ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA);
+
+    /**
+     * Contrast-remaps the matte alpha through smoothstep(lo, hi, a) to harden a soft
+     * matte (e.g. RVM): alpha <= lo -> 0, alpha >= hi -> 1, smooth between -- reducing
+     * partial-alpha ghosting. Controlled by $PROJECTM_SEG_HARDEN_LO / _HI; a no-op when
+     * lo<=0 and hi>=1 (the default), preserving the raw matte.
+     */
+    void HardenAlpha(int w, int h, std::vector<uint8_t>& outRGBA);
+
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };
