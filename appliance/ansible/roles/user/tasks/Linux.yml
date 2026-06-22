@@ -1,0 +1,26 @@
+---
+# Create a low-privilege local Linux account for the appliance, idempotently.
+# The appliance user needs membership in the device groups for the camera (video), GPU
+# (render), and audio so projectM's webcam + GPU seg work in its session.
+
+- name: Create the appliance user
+  become: true
+  ansible.builtin.user:
+    name: "{{ appliance_user }}"
+    comment: "{{ appliance_user_fullname | default('projectM Appliance') }}"
+    shell: /bin/bash
+    create_home: true
+    groups: "{{ appliance_user_groups | default(['video', 'render', 'audio', 'input']) }}"
+    append: true
+    state: present
+
+# Auto-login via GDM does not need a stored password (unlike macOS kcpassword). A password is
+# only useful for manual login / su when debugging, so set it only if one was provided. chpasswd
+# avoids a passlib dependency on the control node.
+- name: Set the appliance user's password (optional; auto-login does not require it)
+  become: true
+  when: (appliance_user_password | default('')) | length > 0
+  ansible.builtin.shell:
+    cmd: "echo '{{ appliance_user }}:{{ appliance_user_password }}' | chpasswd"
+  no_log: true
+  changed_when: true

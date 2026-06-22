@@ -1,27 +1,36 @@
 ---
 # Copy this file to all.yml and edit. all.yml is git-ignored because it holds a password.
 #
-# Intended flow: build + install the deploy bundle first —
-#     just deploy-macos && just deploy-to-user <user>
-# which puts a self-contained bundle at /Users/<user>/projectm and seeds ~/.projectM. Then this
-# playbook adds the system pieces the bundle can't: the autostart LaunchAgent and auto-login.
-# If the bundle already seeded config.inp, you can skip the config role: ./bootstrap.sh --skip-tags config
+# Intended flow — build + install the bundle first, then run this playbook for the system pieces
+# the bundle can't do (autostart + auto-login):
+#   macOS:  just deploy-macos && just deploy-to-user <user>   (bundle at /Users/<user>/projectm)
+#   Linux:  sudo -E just deploy-linux                          (system tree at /opt/projectm)
+# If the bundle already seeded config.inp you can skip the config role: ./bootstrap.sh --skip-tags config
+#
+# The macOS values are shown live below; the Linux (/opt/projectm) equivalents are in the
+# commented block beside each. On Linux, uncomment those and comment out the macOS lines.
 
 # --- Appliance account -------------------------------------------------------------------
 appliance_user: brpl
 appliance_user_fullname: "projectM Appliance"
-# Password for the kiosk account. Also used to enable auto-login (stored obfuscated in
-# /etc/kcpassword). Use a dedicated throwaway account — see README caveats.
+# Kiosk account password. On macOS it also seeds auto-login (/etc/kcpassword). On Linux, GDM
+# auto-login needs NO stored password, so this is optional there (used only for manual login/su).
 appliance_user_password: "changeme"
+# Linux only: extra groups the kiosk user needs for the camera/GPU/audio devices (default shown).
+# appliance_user_groups: ["video", "render", "audio", "input"]
 
-# Enable macOS automatic login for the appliance user. Set false to configure it manually.
+# Enable automatic login for the appliance user (macOS kcpassword / Linux GDM). False = manual.
 enable_autologin: true
 
-# --- projectM binary + presets (deploy bundle at /Users/<user>/projectm) ------------------
+# --- projectM binary + presets -----------------------------------------------------------
+# macOS deploy bundle at /Users/<user>/projectm:
 projectm_binary: "/Users/brpl/projectm/bin/projectM-Test-UI"
-
-# Preset source. Use a directory...
 projectm_preset_path: "/Users/brpl/projectm/share/projectm/presets/video"
+# Linux system tree at /opt/projectm (uncomment for Linux). projectm_binary is unused on Linux —
+# the XDG autostart entry runs /opt/projectm/run-projectm.sh (override with projectm_run_script).
+# projectm_run_script: "/opt/projectm/run-projectm.sh"
+# projectm_preset_path: "/opt/projectm/share/projectm/presets/video"
+
 # ...or a favorites list file (leave empty to use projectm_preset_path):
 projectm_preset_list: ""
 
@@ -36,6 +45,15 @@ projectm_video_devices: "Camera"
 # Foreground masking. "seg" = ONNX person segmentation on the webcam; empty/"off" to disable.
 projectm_video_mask: "seg"
 projectm_seg_quality: 2
+# Seg model path. Empty = default ($HOME/.projectM/models/rvm_mobilenetv3.onnx). On the Linux /opt
+# bundle the appliance user's home has no models, so point these at /opt/projectm/models/...:
+# projectm_seg_model: "/opt/projectm/models/rvm_mobilenetv3.onnx"
+# Optional monocular depth gate (drops background people). Empty = off.
+# projectm_seg_depth_model: "/opt/projectm/models/depth_anything_v2_vits.onnx"
+# projectm_seg_depth_band: 0.20
+# Optional matte hardening (smoothstep alpha contrast). Leave unset for off (raw matte).
+# projectm_seg_harden_lo: 0.0
+# projectm_seg_harden_hi: 1.0
 
 # Texture search path ("~" expands to $HOME; the deploy bundle seeds ~/.projectM/textures).
 projectm_texture_path: "~/.projectM/textures"

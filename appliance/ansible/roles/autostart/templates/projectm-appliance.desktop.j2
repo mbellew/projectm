@@ -1,0 +1,11 @@
+[Desktop Entry]
+# Managed by the projectM appliance Ansible role. Do not edit by hand.
+Type=Application
+Name=projectM Appliance
+Comment=Launch projectM fullscreen at login
+# Run the bundle launcher, appending stdout/stderr to a log like the macOS LaunchAgent does.
+# bash -lc gives us shell redirection (a bare .desktop Exec cannot redirect).
+Exec=/bin/bash -lc 'exec {{ projectm_run_script | default("/opt/projectm/run-projectm.sh") }} >>"$HOME/.projectM/projectm.log" 2>&1'
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

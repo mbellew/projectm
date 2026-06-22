@@ -25,7 +25,22 @@ Texture Path = {{ projectm_texture_path | default('~/.projectM/textures') }}
 {% if projectm_video_mask %}
 
 # Foreground masking. "seg" = ONNX person segmentation (RVM) on the webcam color frame.
-# Model defaults to $HOME/.projectM/models/rvm_mobilenetv3.onnx (seeded by the deploy bundle).
+# Model defaults to $HOME/.projectM/models/rvm_mobilenetv3.onnx; on the Linux /opt bundle set
+# projectm_seg_model to an absolute /opt/projectm/models/... path (the appliance user's home has
+# no models seeded).
 Video Mask = {{ projectm_video_mask }}
 Video Seg Quality = {{ projectm_seg_quality | default(2) }}
+{% if projectm_seg_model %}
+Video Seg Model = {{ projectm_seg_model }}
+{% endif %}
+{% if projectm_seg_depth_model %}
+# Monocular depth gate: drop background people from the matte by relative depth.
+Video Seg Depth Model = {{ projectm_seg_depth_model }}
+Video Seg Depth Band = {{ projectm_seg_depth_band | default(0.20) }}
+{% endif %}
+{% if projectm_seg_harden_hi is defined or projectm_seg_harden_lo is defined %}
+# Matte hardening (smoothstep alpha contrast). Lo=0,Hi=1 = off.
+Video Seg Harden Lo = {{ projectm_seg_harden_lo | default(0.0) }}
+Video Seg Harden Hi = {{ projectm_seg_harden_hi | default(1.0) }}
+{% endif %}
 {% endif %}

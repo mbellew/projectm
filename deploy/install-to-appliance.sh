@@ -22,6 +22,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 die() { echo "install-to-appliance: error: $*" >&2; exit 1; }
 note() { echo "install-to-appliance: $*"; }
 
+[[ "$(uname -s)" == "Darwin" ]] || die "macOS-only (uses dscl). On Linux there is no per-user \
+install step — deploy/deploy-linux.sh builds the shared /opt/projectm tree directly."
+
 [[ "$(id -u)" -eq 0 ]] || die "must run as root — use: sudo deploy/install-to-appliance.sh $*"
 
 USER_NAME="${1:-brpl}"

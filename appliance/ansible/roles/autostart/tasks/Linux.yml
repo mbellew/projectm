@@ -1,0 +1,45 @@
+---
+# Launch projectM fullscreen at the appliance user's graphical login via an XDG autostart entry.
+# gnome-session starts autostart entries with the full session environment (DISPLAY, XAUTHORITY,
+# the session D-Bus), which a systemd --user unit would have to import by hand -- so for a GUI
+# kiosk the .desktop entry is the more reliable mechanism. The relaunch-on-crash behaviour (the
+# analogue of the macOS LaunchAgent KeepAlive-on-crash) lives in run-projectm.sh's restart loop.
+#
+# The launcher itself is the system bundle's /opt/projectm/run-projectm.sh, installed by
+# deploy/deploy-linux.sh. Run that first.
+
+- name: Check the system launcher exists
+  become: true
+  ansible.builtin.stat:
+    path: "{{ projectm_run_script | default('/opt/projectm/run-projectm.sh') }}"
+  register: run_script_stat
+
+- name: Fail if the launcher is missing
+  ansible.builtin.assert:
+    that: run_script_stat.stat.exists and run_script_stat.stat.executable
+    fail_msg: >-
+      Launcher {{ projectm_run_script | default('/opt/projectm/run-projectm.sh') }} not found or
+      not executable. Build + install the bundle first:  sudo -E just deploy-linux  (or run
+      deploy/deploy-linux.sh).
+
+- name: Ensure ~/.config and ~/.config/autostart exist
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ appliance_user }}"
+    group: "{{ appliance_user }}"
+    mode: "0755"
+  loop:
+    - "/home/{{ appliance_user }}/.config"
+    - "/home/{{ appliance_user }}/.config/autostart"
+
+- name: Install the XDG autostart entry
+  become: true
+  ansible.builtin.template:
+    src: projectm-appliance.desktop.j2
+    dest: "/home/{{ appliance_user }}/.config/autostart/projectm-appliance.desktop"
+    owner: "{{ appliance_user }}"
+    group: "{{ appliance_user }}"
+    mode: "0644"
+  # Loads at the appliance user's next graphical login (i.e. after reboot with GDM auto-login).

@@ -1,19 +1,4 @@
 ---
-# Write the appliance user's ~/.projectM/config.inp.
-- name: Ensure ~/.projectM exists
-  become: true
-  ansible.builtin.file:
-    path: "/Users/{{ appliance_user }}/.projectM"
-    state: directory
-    owner: "{{ appliance_user }}"
-    group: staff
-    mode: "0755"
-
-- name: Render config.inp
-  become: true
-  ansible.builtin.template:
-    src: config.inp.j2
-    dest: "/Users/{{ appliance_user }}/.projectM/config.inp"
-    owner: "{{ appliance_user }}"
-    group: staff
-    mode: "0644"
+# Dispatch to the per-OS implementation. ansible_system is "Darwin" on macOS, "Linux" on Linux.
+- name: "config: apply {{ ansible_system }} tasks"
+  ansible.builtin.include_tasks: "{{ ansible_system }}.yml"

@@ -73,10 +73,13 @@ deploy-macos: build
     BUILD_DIR={{build_dir}} DEPTHAI_PREFIX={{depthai_prefix}} ONNX_PREFIX={{onnx_prefix}} \
         deploy/deploy-macos.sh
 
-# Build a self-contained Linux appliance bundle (not yet implemented)
+# Install the Linux appliance tree to /opt/projectm (binary + libs + CUDA runtime + models +
+# presets). Needs sudo to write /opt; the source paths are passed explicitly so they survive sudo.
+# Stage elsewhere without sudo by calling the script directly: deploy/deploy-linux.sh /tmp/projectm
 deploy-linux: build
-    BUILD_DIR={{build_dir}} DEPTHAI_PREFIX={{depthai_prefix}} ONNX_PREFIX={{onnx_prefix}} \
-        deploy/deploy-linux.sh
+    sudo BUILD_DIR={{justfile_directory()}}/{{build_dir}} ONNX_PREFIX={{onnx_prefix}} \
+        CUDA_RUNTIME_DIR={{cuda_runtime_dir}} MODELS_DIR={{env_var('HOME')}}/.projectM/models \
+        {{justfile_directory()}}/deploy/deploy-linux.sh
 
 # Install the built macOS bundle into an appliance user's home + seed ~/.projectM (needs sudo).
 # Run `just deploy-macos` first. Example: `just deploy-to-user brpl`

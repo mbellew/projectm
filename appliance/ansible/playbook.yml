@@ -1,8 +1,8 @@
 ---
 # projectM appliance configuration.
 #
-# Applies to the local machine by default (see bootstrap.sh). Roles are OS-gated so the
-# Linux variant can be added later without touching this file.
+# Applies to the local machine by default (see bootstrap.sh). Each role dispatches to a per-OS
+# task file (Darwin.yml / Linux.yml) via ansible_system, so macOS and Linux share this playbook.
 - name: Configure projectM appliance
   hosts: all
   gather_facts: true
@@ -10,10 +10,10 @@
   pre_tasks:
     - name: Fail early on unsupported platforms
       ansible.builtin.assert:
-        that: ansible_os_family == "Darwin"
+        that: ansible_system in ["Darwin", "Linux"]
         fail_msg: >-
-          Only macOS is implemented today. Remove this assertion and add Linux task files to the
-          roles to extend support.
+          Only macOS (Darwin) and Linux are supported. Each role dispatches to a per-OS task file
+          ({{ ansible_system }}.yml); add another for a new platform.
 
   # Tags let you apply roles selectively, e.g. `./bootstrap.sh --tags autostart`. When the
   # `just deploy-to-user` bundle already seeded ~/.projectM/config.inp, skip the config role
@@ -23,8 +23,8 @@
       tags: [user]
     - role: config      # write ~/.projectM/config.inp
       tags: [config]
-    - role: autostart   # LaunchAgent that runs projectM fullscreen at login
+    - role: autostart   # run projectM fullscreen at login (macOS LaunchAgent / Linux XDG autostart)
       tags: [autostart]
-    - role: autologin   # enable automatic login for the appliance user
+    - role: autologin   # enable automatic login for the appliance user (macOS kcpassword / Linux GDM)
       when: enable_autologin | bool
       tags: [autologin]

@@ -9,15 +9,28 @@ build tree, Homebrew, or `~/.local` prefixes.
 
 ```bash
 just deploy-macos          # -> dist/projectm/ + dist/projectm-macos-<arch>.tar.gz
-just deploy-linux          # TODO (stub)
+just deploy-linux          # -> /opt/projectm  (builds as you; the recipe runs sudo to write /opt)
 ```
 
-Or call the scripts directly (they take an optional OUT_DIR and several env overrides — see the
-header of `deploy-macos.sh`):
+Or call the scripts directly (they take an optional OUT_DIR and several env overrides — see each
+script's header):
 
 ```bash
 INCLUDE_MODELS=0 deploy/deploy-macos.sh /tmp/out
+deploy/deploy-linux.sh /tmp/projectm        # stage the Linux tree anywhere (no sudo)
 ```
+
+### macOS vs Linux model
+
+The two platforms differ by necessity:
+
+- **macOS** builds a **relocatable** bundle (every dylib `install_name_tool`-rewritten to
+  `@loader_path`) into `dist/`, then `install-to-appliance.sh` copies it into a user's home.
+- **Linux** assembles a **system tree at `/opt/projectm`** directly (no patchelf): the launcher
+  puts `/opt/projectm/lib` on `LD_LIBRARY_PATH`, which is searched before the binary's RUNPATH, so
+  the bundled `.so`s win with no relocation. It includes the **CUDA/cuDNN runtime (~1 GB)** so the
+  seg/depth models run on the GPU. `deploy-linux.sh` is the whole story — there is no separate
+  `install-to-appliance` step on Linux (that script is macOS-only / `dscl`-based).
 
 ## What goes in the bundle
 

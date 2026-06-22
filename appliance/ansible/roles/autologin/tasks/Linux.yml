@@ -1,0 +1,53 @@
+---
+# Enable GDM automatic login for the appliance user by editing /etc/gdm3/custom.conf.
+# Unlike macOS, GDM auto-login stores NO password (it just names the user), so this is far less
+# sensitive than the macOS /etc/kcpassword approach. Takes effect on the next reboot.
+#
+# Path note: gdm3 (Debian/Ubuntu) uses /etc/gdm3/custom.conf; gdm (Fedora/RHEL) uses
+# /etc/gdm/custom.conf. We pick whichever exists.
+
+- name: Locate the GDM custom.conf
+  become: true
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/gdm3/custom.conf
+    - /etc/gdm/custom.conf
+  register: gdm_conf_stat
+
+- name: Resolve the GDM config path
+  ansible.builtin.set_fact:
+    gdm_conf: "{{ (gdm_conf_stat.results | selectattr('stat.exists') | map(attribute='stat.path') | list | first) | default('') }}"
+
+- name: Fail if no GDM config was found
+  ansible.builtin.assert:
+    that: gdm_conf | length > 0
+    fail_msg: >-
+      No GDM custom.conf found (looked in /etc/gdm3 and /etc/gdm). This role targets a GDM
+      desktop; for a different display manager (LightDM/SDDM) add its auto-login config here.
+
+- name: Enable GDM automatic login
+  become: true
+  community.general.ini_file:
+    path: "{{ gdm_conf }}"
+    section: daemon
+    option: AutomaticLoginEnable
+    value: "true"
+    no_extra_spaces: true
+    mode: "0644"
+
+- name: Set the GDM automatic-login user
+  become: true
+  community.general.ini_file:
+    path: "{{ gdm_conf }}"
+    section: daemon
+    option: AutomaticLogin
+    value: "{{ appliance_user }}"
+    no_extra_spaces: true
+    mode: "0644"
+
+- name: Note
+  ansible.builtin.debug:
+    msg: >-
+      GDM automatic login enabled for '{{ appliance_user }}' in {{ gdm_conf }}.
+      Takes effect on the next reboot.

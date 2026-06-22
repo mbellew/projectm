@@ -1,0 +1,20 @@
+---
+# Write the appliance user's ~/.projectM/config.inp on Linux. The home is /home/<user> and the
+# primary group matches the username (user-private groups, the Debian/Ubuntu default).
+- name: Ensure ~/.projectM exists
+  become: true
+  ansible.builtin.file:
+    path: "/home/{{ appliance_user }}/.projectM"
+    state: directory
+    owner: "{{ appliance_user }}"
+    group: "{{ appliance_user }}"
+    mode: "0755"
+
+- name: Render config.inp
+  become: true
+  ansible.builtin.template:
+    src: config.inp.j2
+    dest: "/home/{{ appliance_user }}/.projectM/config.inp"
+    owner: "{{ appliance_user }}"
+    group: "{{ appliance_user }}"
+    mode: "0644"
