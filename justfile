@@ -4,6 +4,17 @@ build_dir := if os() == "macos" { "cmake-build-luxonis" } else { "cmake-build-li
 depthai_prefix := env_var('HOME') / ".local/depthai-core"
 # ONNX Runtime (person-seg) install prefix (prebuilt: osx-arm64 on macOS, linux-x64 on Linux).
 onnx_prefix := env_var('HOME') / ".local/onnxruntime"
+onnx_lib_dir := onnx_prefix / "lib"
+# CUDA 13 / cuDNN 9 runtime libs for the GPU ONNX Runtime person-seg (see LINUX_SETUP.md §9).
+cuda_runtime_dir := env_var('HOME') / ".local/cuda-runtime/lib"
+
+# Inline env prefix for the run recipes: puts the ONNX Runtime + CUDA runtime libs on the loader
+# path so the seg model runs on the GPU (CUDA execution provider). Without it the CUDA provider
+# can't dlopen cuBLAS/cuDNN and seg silently falls back to the CPU — which a profile shows is ~80%
+# of CPU time. Set INLINE on the command (not via `export`) on purpose: snap-packaged `just` strips
+# an exported LD_LIBRARY_PATH for security, but an inline assignment applied by the recipe shell at
+# exec time survives. Empty on macOS (CoreML EP; finds its libs via rpath).
+run_env := if os() == "linux" { "LD_LIBRARY_PATH=" + cuda_runtime_dir + ":" + onnx_lib_dir } else { "" }
 
 # Audio/video source preferences (and other settings) live in ~/.projectM/config.inp,
 # a local, untracked file: Audio Devices / Video Devices / Fullscreen, etc.
@@ -29,23 +40,23 @@ build:
 
 # Run the test UI
 run: build
-    PROJECTM_PRESET_PATH=presets/cream-of-the-crop {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
+    {{run_env}} PROJECTM_PRESET_PATH=presets/cream-of-the-crop {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 # Run the test UI with presets/tests as the preset path
 test: build
-    PROJECTM_PRESET_PATH=presets/tests {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
+    {{run_env}} PROJECTM_PRESET_PATH=presets/tests {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 # Run the test UI with presets/video as the preset path
 video: build
-    PROJECTM_PRESET_PATH=presets/video {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
+    {{run_env}} PROJECTM_PRESET_PATH=presets/video {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 # Run the test UI with favorites.txt as the preset list
 favorites: build
-    PROJECTM_PRESET_LIST=favorites.txt {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
+    {{run_env}} PROJECTM_PRESET_LIST=favorites.txt {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 # Run the test UI with videos.txt as the preset list
 videotxt: build
-    PROJECTM_PRESET_LIST=video.txt {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
+    {{run_env}} PROJECTM_PRESET_LIST=video.txt {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 
 # Run the test UI on a single preset, e.g. `just preset presets/tests/402-compshader-video-motion.milk`
@@ -55,7 +66,7 @@ preset file: build
     list="$(mktemp -t projectm-preset.XXXXXX)"
     trap 'rm -f "$list"' EXIT
     printf '%s\n' "{{file}}" > "$list"
-    PROJECTM_PRESET_LIST="$list" {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
+    {{run_env}} PROJECTM_PRESET_LIST="$list" {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 # Build a self-contained, relocatable macOS appliance bundle into dist/ (see deploy/README.md)
 deploy-macos: build
