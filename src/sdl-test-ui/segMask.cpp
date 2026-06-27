@@ -1186,14 +1186,18 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
         }
     }
 
-    // 4. Connected components (4-connectivity) over foreground cells; collect each one's depths.
+    // 4. Connected components (4-connectivity) over foreground cells; collect each one's depths
+    //    and accumulate its centroid (grid coords) so step 5 can weigh size and centrality.
     std::vector<std::vector<float>> compDepths;
+    std::vector<double> compSumX, compSumY; // centroid accumulators, parallel to compDepths
     std::vector<int> stack;
     for (int s = 0; s < gn; ++s)
     {
         if (!cellFg[s] || I.ccLabel[s] >= 0) { continue; }
         const int label = static_cast<int>(compDepths.size());
         compDepths.emplace_back();
+        compSumX.push_back(0.0);
+        compSumY.push_back(0.0);
         stack.clear();
         stack.push_back(s);
         I.ccLabel[s] = label;
@@ -1203,6 +1207,8 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
             stack.pop_back();
             compDepths[label].push_back(cellDepth[c]);
             const int cx = c % gw, cy = c / gw;
+            compSumX[label] += cx;
+            compSumY[label] += cy;
             const int nb[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
             for (const auto& d : nb)
             {
@@ -1219,20 +1225,42 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     }
     if (compDepths.empty()) { return; } // no people in the matte -> nothing to gate
 
-    // 5. Reference depth = the closeness of the nearest sizable component (the main subject). Using
-    //    a component median, rather than the single nearest pixel, keeps the reference robust to
-    //    stray near specks. Components smaller than minArea are ignored as noise/fragments.
+    // 5. Reference depth = the closeness of the *anchor* component -- the main subject. Rather than
+    //    simply taking the nearest blob (which lets a partial figure clipping the screen edge, even
+    //    one only slightly closer, steal the reference and push the real subject behind the keep
+    //    band), we score each sizable component by salience = area x centrality and anchor on the
+    //    winner. A reasonably large, centred figure therefore outranks a small edge fragment even
+    //    when the fragment is nearer; because the keep band still spares everything in front of the
+    //    anchor (step 6), that nearer fragment is itself kept -- we only stop it from hijacking the
+    //    band. Using each component's median depth keeps the reference robust to stray near specks.
+    //    Components smaller than minArea are ignored as noise/fragments.
     const int minArea = std::max(1, EnvInt("PROJECTM_SEG_DEPTH_MINAREA", std::max(4, gn / 400)));
+    // Centrality strength: how steeply salience falls off toward the frame edge. 0 disables it
+    // (pure largest-blob anchoring); larger values favour the middle of the screen more strongly.
+    const float centerBias = std::max(0.0f, EnvFloat("PROJECTM_SEG_DEPTH_CENTER", 1.0f));
+    const float cx0 = 0.5f * (gw - 1), cy0 = 0.5f * (gh - 1);
+    const float halfDiag = std::max(1.0f, std::sqrt(cx0 * cx0 + cy0 * cy0));
     std::vector<float> compClose(compDepths.size(), -1.0f); // kept for the debug log
+    std::vector<float> compSal(compDepths.size(), -1.0f);   // kept for the debug log
     float refClose = -1.0f;
+    int anchorK = -1;
+    float bestSalience = -1.0f;
     for (size_t k = 0; k < compDepths.size(); ++k)
     {
         auto& v = compDepths[k];
-        if (static_cast<int>(v.size()) < minArea) { continue; }
+        const int area = static_cast<int>(v.size());
+        if (area < minArea) { continue; }
         std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
         const float cl = closeness(v[v.size() / 2]);
         compClose[k] = cl;
-        refClose = std::max(refClose, cl);
+        // Centroid distance from frame centre, normalized to [0,1] (0 = dead centre, 1 = corner).
+        const float ccx = static_cast<float>(compSumX[k] / area);
+        const float ccy = static_cast<float>(compSumY[k] / area);
+        const float r = std::sqrt((ccx - cx0) * (ccx - cx0) + (ccy - cy0) * (ccy - cy0)) / halfDiag;
+        const float centrality = 1.0f / (1.0f + centerBias * r * r);
+        const float salience = static_cast<float>(area) * centrality;
+        compSal[k] = salience;
+        if (salience > bestSalience) { bestSalience = salience; refClose = cl; anchorK = static_cast<int>(k); }
     }
     if (refClose < 0.0f) { return; } // only noise-sized blobs -> leave the matte unchanged
 
@@ -1289,14 +1317,15 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
             for (size_t k = 0; k < compDepths.size() && k < 12; ++k)
             {
                 if (compClose[k] < 0.0f) { continue; } // skip tiny/ignored
-                char buf[48];
-                std::snprintf(buf, sizeof(buf), " [%zu: close=%.2f n=%zu]", k, compClose[k],
+                char buf[72];
+                std::snprintf(buf, sizeof(buf), " [%zu:%s close=%.2f sal=%.0f n=%zu]", k,
+                              (static_cast<int>(k) == anchorK ? "*" : ""), compClose[k], compSal[k],
                               compDepths[k].size());
                 s += buf;
             }
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                        "[SegMasker] depth gate: %zu comps, refClose=%.2f, keep>=%.2f;%s",
-                        compDepths.size(), refClose, refClose - I.depthBand, s.c_str());
+                        "[SegMasker] depth gate: %zu comps, anchor=%d refClose=%.2f, keep>=%.2f;%s",
+                        compDepths.size(), anchorK, refClose, refClose - I.depthBand, s.c_str());
         }
     }
 
