@@ -264,6 +264,33 @@ void projectMSDL::startVideoCapture()
                                                     static_cast<unsigned int>(width),
                                                     static_cast<unsigned int>(height),
                                                     PROJECTM_VIDEO_FORMAT_RGBA);
+
+                        // Alpha-weighted centroid of the matte -> seg_* preset variables.
+                        // Row 0 is the top of the frame; flip Y so cy matches preset per-pixel
+                        // y (bottom-up). The library applies mirror and all smoothing.
+                        const uint8_t* px = outBuf->data();
+                        double sumA = 0.0, sumXA = 0.0, sumYA = 0.0;
+                        const double invW = (width > 1) ? 1.0 / (width - 1) : 0.0;
+                        const double invH = (height > 1) ? 1.0 / (height - 1) : 0.0;
+                        for (int row = 0; row < height; ++row)
+                        {
+                            const double yv = 1.0 - row * invH; // bottom-up
+                            for (int col = 0; col < width; ++col)
+                            {
+                                const double a = px[(static_cast<size_t>(row) * width + col) * 4 + 3] / 255.0;
+                                sumA += a;
+                                sumXA += a * (col * invW);
+                                sumYA += a * yv;
+                            }
+                        }
+                        float cx = 0.5f, cy = 0.5f, coverage = 0.0f;
+                        if (sumA > 1e-6)
+                        {
+                            cx = static_cast<float>(sumXA / sumA);
+                            cy = static_cast<float>(sumYA / sumA);
+                            coverage = static_cast<float>(sumA / (static_cast<double>(width) * height));
+                        }
+                        projectm_video_set_seg_centroid(handle, cx, cy, coverage);
                     },
                     preferredDevices);
                 if (segOk)

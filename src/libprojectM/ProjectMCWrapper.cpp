@@ -559,6 +559,12 @@ bool projectm_video_is_active(projectm_handle instance)
     return projectMInstance->VideoIsActive();
 }
 
+void projectm_video_set_seg_centroid(projectm_handle instance, float cx, float cy, float coverage)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->VideoSetSegCentroid(cx, cy, coverage);
+}
+
 uint32_t projectm_sprite_create(projectm_handle instance, const char* type, const char* code)
 {
     auto* projectMInstance = handle_to_instance(instance);

@@ -87,6 +87,8 @@ public:
 
     void BindFramebuffer() override;
 
+    auto IsComplete() const -> bool override;
+
 private:
     void PerFrameUpdate();
 
@@ -114,6 +116,7 @@ private:
     std::shared_ptr<Renderer::TextureAttachment> m_motionVectorUVMap; //!< The UV map of the previous frame's warp mesh, used for motion vector reverse propagation.
 
     PresetState m_state;               //!< Preset state container.
+    bool m_presetComplete{false};      //!< Set from the per-frame `preset_complete` flag; see IsComplete().
     PerFrameContext m_perFrameContext; //!< Preset per-frame evaluation code context.
     PerPixelContext m_perPixelContext; //!< Preset per-pixel/per-vertex evaluation code context.
 

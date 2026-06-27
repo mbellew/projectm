@@ -107,6 +107,12 @@ public:
     PRJM_EVAL_F* y{};
     PRJM_EVAL_F* rad{};
     PRJM_EVAL_F* ang{};
+    PRJM_EVAL_F* seg_cx{};       //!< Person-seg centroid X, 0..1 left to right.
+    PRJM_EVAL_F* seg_cy{};       //!< Person-seg centroid Y, 0..1 bottom to top.
+    PRJM_EVAL_F* seg_vx{};       //!< Person-seg centroid velocity X, screen-fractions/sec.
+    PRJM_EVAL_F* seg_vy{};       //!< Person-seg centroid velocity Y, screen-fractions/sec.
+    PRJM_EVAL_F* seg_coverage{}; //!< Person-seg foreground fraction, 0..1.
+    PRJM_EVAL_F* seg_valid{};    //!< 1.0 when a confident mask is present, else 0.0.
     PRJM_EVAL_F* frame{};
     PRJM_EVAL_F* q_vars[QVarCount]{};
     PRJM_EVAL_F* progress{};

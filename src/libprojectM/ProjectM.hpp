@@ -27,6 +27,7 @@
 
 #include <Audio/PCM.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <istream>
 #include <memory>
@@ -331,6 +332,14 @@ public:
     auto VideoIsActive() const -> bool;
 
     /**
+     * @brief Sets the person-segmentation centroid for the current frame. Safe to call from any thread.
+     * @param cx Centroid X in [0,1], left to right (camera-native orientation; mirror applied internally).
+     * @param cy Centroid Y in [0,1], bottom to top (matches preset per-pixel y).
+     * @param coverage Foreground fraction of the frame, [0,1]. Drives the confidence/return-to-center.
+     */
+    void VideoSetSegCentroid(float cx, float cy, float coverage);
+
+    /**
      * @brief Draws the given texture on the active preset's main texture to get a "burn-in" effect.
      * @param openGlTextureId The OpenGL texture to draw onto the active preset(s).
      * @param left Left coordinate in pixels on the destination texture.
@@ -350,6 +359,9 @@ private:
     void LoadIdlePreset();
 
     auto GetRenderContext() -> Renderer::RenderContext;
+
+    //! Advances the smoothed person-seg centroid one frame (called from RenderFrame).
+    void UpdateSegState(double dtSeconds);
 
     uint32_t m_meshX{32};            //!< Per-point mesh horizontal resolution.
     uint32_t m_meshY{24};            //!< Per-point mesh vertical resolution.
@@ -399,6 +411,22 @@ private:
     bool m_videoMaskRefine{false};
     bool m_videoMirror{false};
     float m_videoKeyR{0.0f}, m_videoKeyG{0.0f}, m_videoKeyB{0.0f};
+
+    // Person-seg centroid. The app writes the measured values (capture thread) via
+    // VideoSetSegCentroid; UpdateSegState smooths them once per frame (render thread) into the
+    // seg_* outputs exposed to presets through RenderContext. See UpdateSegState for the model.
+    std::atomic<uint32_t> m_segSeq{0};            //!< Bumped on each app update; render thread detects freshness.
+    uint32_t m_segSeqSeen{0};                     //!< Last sequence the render thread processed.
+    float m_segMeasuredCx{0.5f};                  //!< Latest app-provided centroid X (mirror-corrected).
+    float m_segMeasuredCy{0.5f};                  //!< Latest app-provided centroid Y.
+    float m_segMeasuredCoverage{0.0f};            //!< Latest app-provided foreground fraction.
+    float m_segSecondsSinceUpdate{1.0e3f};        //!< Time since the last app update (staleness).
+    float m_segCx{0.5f};                          //!< Smoothed centroid X (seg_cx).
+    float m_segCy{0.5f};                          //!< Smoothed centroid Y (seg_cy).
+    float m_segVx{0.0f};                          //!< Smoothed centroid velocity X (seg_vx), /sec.
+    float m_segVy{0.0f};                          //!< Smoothed centroid velocity Y (seg_vy), /sec.
+    float m_segCoverage{0.0f};                    //!< Smoothed foreground fraction (seg_coverage).
+    float m_segValid{0.0f};                       //!< 1.0 when a confident mask is present (seg_valid).
 };
 
 } // namespace libprojectM

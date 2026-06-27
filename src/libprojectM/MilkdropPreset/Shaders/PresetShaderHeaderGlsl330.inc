@@ -49,6 +49,15 @@ uniform float    beat_onset;          // 1.0 on frames where a beat landed, else
 uniform float    beat_bpm;            // estimated tempo (BPM); 0 until the tracker locks
 uniform float    beat_conf;           // beat-tracker confidence, 0 .. 1
 
+// Person-seg centroid, smoothed by the library (set via projectm_video_set_seg_centroid).
+// Eases to screen center (0.5, 0.5) when no mask is present. seg_v* are screen-fractions/sec.
+uniform float    seg_cx;              // centroid X, 0 .. 1 (left to right)
+uniform float    seg_cy;              // centroid Y, 0 .. 1 (bottom to top)
+uniform float    seg_vx;              // centroid velocity X
+uniform float    seg_vy;              // centroid velocity Y
+uniform float    seg_coverage;        // foreground fraction of the frame, 0 .. 1
+uniform float    seg_valid;           // 1.0 when a confident mask is present, else 0.0
+
 // note: in general, don't use the current time w/the *dynamic* rotations!
 
 // four random, static rotations, randomized at preset load time.

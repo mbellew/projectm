@@ -60,6 +60,13 @@ public:
      */
     virtual void BindFramebuffer() = 0;
 
+    /**
+     * @brief Whether the preset has signalled it wants projectM to switch away from it.
+     * Milkdrop presets set this via the writable per-frame variable `preset_complete` (> 0.5),
+     * letting a preset cap its own duration or end on a cue. Defaults to false.
+     */
+    virtual auto IsComplete() const -> bool { return false; }
+
     inline void SetFilename(const std::string& filename)
     {
         m_filename = filename;

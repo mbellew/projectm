@@ -88,6 +88,13 @@ public:
     PRJM_EVAL_F* beat_onset{}; //!< 1.0 on frames where a beat landed, else 0.0.
     PRJM_EVAL_F* beat_bpm{};   //!< Estimated tempo (BPM), 0 until locked.
     PRJM_EVAL_F* beat_conf{};  //!< Beat-tracker confidence, 0..1.
+    PRJM_EVAL_F* seg_cx{};       //!< Person-seg centroid X, 0..1 left to right.
+    PRJM_EVAL_F* seg_cy{};       //!< Person-seg centroid Y, 0..1 bottom to top.
+    PRJM_EVAL_F* seg_vx{};       //!< Person-seg centroid velocity X, screen-fractions/sec.
+    PRJM_EVAL_F* seg_vy{};       //!< Person-seg centroid velocity Y, screen-fractions/sec.
+    PRJM_EVAL_F* seg_coverage{}; //!< Person-seg foreground fraction, 0..1.
+    PRJM_EVAL_F* seg_valid{};    //!< 1.0 when a confident mask is present, else 0.0.
+    PRJM_EVAL_F* preset_complete{}; //!< Preset-writable: set > 0.5 to ask projectM to switch away.
     PRJM_EVAL_F* wave_a{};
     PRJM_EVAL_F* wave_av{}; //!< /*FLOATBUF*/ Base-waveform per-pixel alpha-channel state value (wave_av, default 1.0).
     PRJM_EVAL_F* wave_r{};

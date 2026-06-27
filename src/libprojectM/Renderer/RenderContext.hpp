@@ -52,6 +52,15 @@ public:
     float videoZRange{0.0f};             //!< Normalized Z range of valid slices (uniform video_z_range).
     float videoFrameCount{0.0f};         //!< Number of video frames uploaded so far (uniform video_frame_count).
     float videoBufferSeconds{0.0f};      //!< Wall-clock seconds spanned by valid slices (uniform video_buffer_seconds).
+
+    // Person-seg centroid, smoothed by the library and exposed to presets as seg_* eval
+    // variables (and seg_* shader uniforms). Centered (0.5, 0.5) when no mask is present.
+    float segCx{0.5f};       //!< Centroid X, [0,1] left to right (seg_cx).
+    float segCy{0.5f};       //!< Centroid Y, [0,1] bottom to top (seg_cy).
+    float segVx{0.0f};       //!< Centroid velocity X, screen-fractions/sec (seg_vx).
+    float segVy{0.0f};       //!< Centroid velocity Y, screen-fractions/sec (seg_vy).
+    float segCoverage{0.0f}; //!< Foreground fraction of the frame, [0,1] (seg_coverage).
+    float segValid{0.0f};    //!< 1.0 when a confident mask is present, else 0.0 (seg_valid).
 };
 
 } // namespace Renderer

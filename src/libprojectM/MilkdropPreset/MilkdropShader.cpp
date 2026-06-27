@@ -305,6 +305,13 @@ void MilkdropShader::LoadVariables(const PresetState& presetState, const PerFram
     m_shader.SetUniformFloat("beat_bpm", presetState.audioData.bpm);
     m_shader.SetUniformFloat("beat_conf", presetState.audioData.beatConf);
 
+    m_shader.SetUniformFloat("seg_cx", presetState.renderContext.segCx);
+    m_shader.SetUniformFloat("seg_cy", presetState.renderContext.segCy);
+    m_shader.SetUniformFloat("seg_vx", presetState.renderContext.segVx);
+    m_shader.SetUniformFloat("seg_vy", presetState.renderContext.segVy);
+    m_shader.SetUniformFloat("seg_coverage", presetState.renderContext.segCoverage);
+    m_shader.SetUniformFloat("seg_valid", presetState.renderContext.segValid);
+
 
     std::array<glm::mat4, 24> tempMatrices{};
 

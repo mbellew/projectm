@@ -53,6 +53,12 @@ void PerPixelContext::RegisterBuiltinVariables()
     REG_VAR(bass_att);
     REG_VAR(mid_att);
     REG_VAR(treb_att);
+    REG_VAR(seg_cx);
+    REG_VAR(seg_cy);
+    REG_VAR(seg_vx);
+    REG_VAR(seg_vy);
+    REG_VAR(seg_coverage);
+    REG_VAR(seg_valid);
     REG_VAR(frame);
     REG_VAR(x);
     REG_VAR(y);
@@ -84,6 +90,12 @@ void PerPixelContext::LoadStateReadOnlyVariables(PresetState& state, PerFrameCon
     *bass_att = static_cast<PRJM_EVAL_F>(*perFrameState.bass_att);
     *mid_att = static_cast<PRJM_EVAL_F>(*perFrameState.mid_att);
     *treb_att = static_cast<PRJM_EVAL_F>(*perFrameState.treb_att);
+    *seg_cx = static_cast<PRJM_EVAL_F>(state.renderContext.segCx);
+    *seg_cy = static_cast<PRJM_EVAL_F>(state.renderContext.segCy);
+    *seg_vx = static_cast<PRJM_EVAL_F>(state.renderContext.segVx);
+    *seg_vy = static_cast<PRJM_EVAL_F>(state.renderContext.segVy);
+    *seg_coverage = static_cast<PRJM_EVAL_F>(state.renderContext.segCoverage);
+    *seg_valid = static_cast<PRJM_EVAL_F>(state.renderContext.segValid);
     *meshx = static_cast<PRJM_EVAL_F>(state.renderContext.perPixelMeshX);
     *meshy = static_cast<PRJM_EVAL_F>(state.renderContext.perPixelMeshY);
     *pixelsx = static_cast<PRJM_EVAL_F>(state.renderContext.viewportSizeX);
@@ -113,6 +125,12 @@ void PerPixelContext::CopyPerFrameState(const PerPixelContext& source)
     *bass_att = *source.bass_att;
     *mid_att = *source.mid_att;
     *treb_att = *source.treb_att;
+    *seg_cx = *source.seg_cx;
+    *seg_cy = *source.seg_cy;
+    *seg_vx = *source.seg_vx;
+    *seg_vy = *source.seg_vy;
+    *seg_coverage = *source.seg_coverage;
+    *seg_valid = *source.seg_valid;
     *meshx = *source.meshx;
     *meshy = *source.meshy;
     *pixelsx = *source.pixelsx;

@@ -212,6 +212,11 @@ auto MilkdropPreset::OutputTexture() const -> std::shared_ptr<Renderer::Texture>
     return m_framebuffer.GetColorAttachmentTexture(m_currentFrameBuffer, 0);
 }
 
+auto MilkdropPreset::IsComplete() const -> bool
+{
+    return m_presetComplete;
+}
+
 void MilkdropPreset::DrawInitialImage(const std::shared_ptr<Renderer::Texture>& image, const Renderer::RenderContext& renderContext)
 {
     m_framebuffer.SetSize(renderContext.viewportSizeX, renderContext.viewportSizeY);
@@ -234,6 +239,9 @@ void MilkdropPreset::PerFrameUpdate()
     m_perPixelContext.LoadStateReadOnlyVariables(m_state, m_perFrameContext);
 
     m_perFrameContext.ExecutePerFrameCode();
+
+    // Let the preset request a switch (self-capped duration, end-on-cue, etc.).
+    m_presetComplete = (*m_perFrameContext.preset_complete > 0.5);
 
     m_perPixelContext.LoadPerFrameQVariables(m_state, m_perFrameContext);
 

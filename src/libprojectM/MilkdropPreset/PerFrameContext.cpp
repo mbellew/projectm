@@ -56,6 +56,13 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(beat_onset);
     REG_VAR(beat_bpm);
     REG_VAR(beat_conf);
+    REG_VAR(seg_cx);
+    REG_VAR(seg_cy);
+    REG_VAR(seg_vx);
+    REG_VAR(seg_vy);
+    REG_VAR(seg_coverage);
+    REG_VAR(seg_valid);
+    REG_VAR(preset_complete);
     REG_VAR(frame);
     REG_VAR(decay);
     REG_VAR(wave_a);
@@ -201,6 +208,13 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *beat_onset = static_cast<PRJM_EVAL_F>(state.audioData.beatOnset);
     *beat_bpm = static_cast<PRJM_EVAL_F>(state.audioData.bpm);
     *beat_conf = static_cast<PRJM_EVAL_F>(state.audioData.beatConf);
+    *seg_cx = static_cast<PRJM_EVAL_F>(state.renderContext.segCx);
+    *seg_cy = static_cast<PRJM_EVAL_F>(state.renderContext.segCy);
+    *seg_vx = static_cast<PRJM_EVAL_F>(state.renderContext.segVx);
+    *seg_vy = static_cast<PRJM_EVAL_F>(state.renderContext.segVy);
+    *seg_coverage = static_cast<PRJM_EVAL_F>(state.renderContext.segCoverage);
+    *seg_valid = static_cast<PRJM_EVAL_F>(state.renderContext.segValid);
+    *preset_complete = 0.0; // Output flag: cleared each frame; the preset re-asserts it to stay "done".
     *frame = static_cast<PRJM_EVAL_F>(state.renderContext.frame);
     for (int q = 0; q < QVarCount; q++)
     {

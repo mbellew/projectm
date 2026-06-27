@@ -38,6 +38,9 @@
 
 #include <UserSprites/SpriteManager.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 namespace libprojectM {
 
 ProjectM::ProjectM()
@@ -146,11 +149,17 @@ void ProjectM::RenderFrame(uint32_t targetFramebufferObject /*= 0*/)
     m_audioStorage.UpdateFrameAudioData(m_timeKeeper->SecondsSinceLastFrame(), m_frameCount);
     auto audioData = m_audioStorage.GetFrameAudioData();
 
+    // Update the smoothed person-seg centroid (eases to center when the mask is weak/gone).
+    UpdateSegState(m_timeKeeper->SecondsSinceLastFrame());
+
     // Check if the preset isn't locked, and we've not already notified the user
     if (!m_presetChangeNotified)
     {
-        // If preset is done and we're not already switching
-        if (m_timeKeeper->PresetProgressA() >= 1.0 && !m_timeKeeper->IsSmoothing())
+        // If preset is done (scheduled duration elapsed, or the preset asked to end via
+        // the per-frame `preset_complete` flag) and we're not already switching.
+        if ((m_timeKeeper->PresetProgressA() >= 1.0 ||
+             (m_activePreset && m_activePreset->IsComplete())) &&
+            !m_timeKeeper->IsSmoothing())
         {
             m_presetChangeNotified = true;
             PresetSwitchRequestedEvent(false);
@@ -669,6 +678,74 @@ auto ProjectM::VideoIsActive() const -> bool
     return m_videoTexture != nullptr;
 }
 
+void ProjectM::VideoSetSegCentroid(float cx, float cy, float coverage)
+{
+    // Called from the capture thread. The library owns horizontal mirroring (it travels with
+    // the frame), so mirror the centroid here to match what presets see. Plain stores; the
+    // render thread reads them in UpdateSegState() (benign races, like audio).
+    m_segMeasuredCx = m_videoMirror ? (1.0f - cx) : cx;
+    m_segMeasuredCy = cy;
+    m_segMeasuredCoverage = coverage;
+    m_segSeq.fetch_add(1, std::memory_order_relaxed);
+}
+
+void ProjectM::UpdateSegState(double dtSeconds)
+{
+    const float dt = static_cast<float>(dtSeconds);
+
+    // Detect a fresh app update (so a stalled producer fades out instead of freezing).
+    const uint32_t seq = m_segSeq.load(std::memory_order_relaxed);
+    if (seq != m_segSeqSeen)
+    {
+        m_segSeqSeen = seq;
+        m_segSecondsSinceUpdate = 0.0f;
+    }
+    else
+    {
+        m_segSecondsSinceUpdate += dt;
+    }
+
+    // Hard-coded tuning (see design notes): confidence blends measured coverage with recency;
+    // when confidence is low the centroid eases back to screen center, when high it tracks.
+    constexpr float kStaleTimeout = 0.5f; // s without an update => treat the mask as gone
+    constexpr float kCovLo = 0.005f;      // coverage below this => zero confidence
+    constexpr float kCovHi = 0.04f;       // coverage above this => full confidence
+    constexpr float kTauTrack = 0.15f;    // s, position ease while confidently tracking
+    constexpr float kTauReturn = 1.2f;    // s, position ease when returning to center
+    constexpr float kTauVel = 0.10f;      // s, velocity smoothing
+
+    const float recency = std::clamp(1.0f - m_segSecondsSinceUpdate / kStaleTimeout, 0.0f, 1.0f);
+    float covConf = std::clamp((m_segMeasuredCoverage - kCovLo) / (kCovHi - kCovLo), 0.0f, 1.0f);
+    covConf = covConf * covConf * (3.0f - 2.0f * covConf); // smoothstep
+    const float confidence = covConf * recency;
+
+    // Target: measured centroid when confident, screen center (0.5, 0.5) when not.
+    const float targetX = 0.5f + (m_segMeasuredCx - 0.5f) * confidence;
+    const float targetY = 0.5f + (m_segMeasuredCy - 0.5f) * confidence;
+
+    const float tau = kTauReturn + (kTauTrack - kTauReturn) * confidence;
+    const float a = (dt > 0.0f) ? (1.0f - std::exp(-dt / tau)) : 1.0f;
+
+    const float prevX = m_segCx;
+    const float prevY = m_segCy;
+    m_segCx += (targetX - m_segCx) * a;
+    m_segCy += (targetY - m_segCy) * a;
+
+    // Velocity from the smoothed position (screen-fractions/sec), damped by confidence so a
+    // vanished mask reports ~0 motion rather than phantom return-to-center drift.
+    if (dt > 1.0e-5f)
+    {
+        const float instVx = (m_segCx - prevX) / dt * confidence;
+        const float instVy = (m_segCy - prevY) / dt * confidence;
+        const float av = 1.0f - std::exp(-dt / kTauVel);
+        m_segVx += (instVx - m_segVx) * av;
+        m_segVy += (instVy - m_segVy) * av;
+    }
+
+    m_segCoverage += (m_segMeasuredCoverage * recency - m_segCoverage) * a;
+    m_segValid = (confidence > 0.5f) ? 1.0f : 0.0f;
+}
+
 auto ProjectM::GetRenderContext() -> Renderer::RenderContext
 {
     Renderer::RenderContext ctx{};
@@ -700,6 +777,13 @@ auto ProjectM::GetRenderContext() -> Renderer::RenderContext
         ctx.videoFrameCount = static_cast<float>(m_videoTexture->FrameCount());
         ctx.videoBufferSeconds = m_videoTexture->BufferSeconds();
     }
+
+    ctx.segCx = m_segCx;
+    ctx.segCy = m_segCy;
+    ctx.segVx = m_segVx;
+    ctx.segVy = m_segVy;
+    ctx.segCoverage = m_segCoverage;
+    ctx.segValid = m_segValid;
 
     if (m_transition)
     {

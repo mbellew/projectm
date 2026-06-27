@@ -163,6 +163,27 @@ PROJECTM_EXPORT void projectm_video_set_mask_mode(projectm_handle instance, int 
  */
 PROJECTM_EXPORT bool projectm_video_is_active(projectm_handle instance);
 
+/**
+ * @brief Supplies the person-segmentation centroid for the current frame.
+ *
+ * The application computes the centroid of its foreground matte and passes it here. The
+ * library smooths it and exposes it to presets as the eval variables and shader uniforms
+ * seg_cx, seg_cy, seg_vx, seg_vy, seg_coverage and seg_valid. Velocity is derived by the
+ * library from the centroid and its frame timing. When coverage is low or no update arrives
+ * for a short while, the centroid eases back to screen center (0.5, 0.5) and seg_valid goes 0.
+ *
+ * Horizontal mirroring (projectm_video_set_mirror) is applied internally, so pass the centroid
+ * in the camera-native orientation. Safe to call from any thread.
+ *
+ * @param instance The projectM instance handle.
+ * @param cx Centroid X in [0,1], left to right.
+ * @param cy Centroid Y in [0,1], bottom to top (matches preset per-pixel y).
+ * @param coverage Foreground fraction of the frame, [0,1].
+ * @since 4.3.0
+ */
+PROJECTM_EXPORT void projectm_video_set_seg_centroid(projectm_handle instance,
+                                                     float cx, float cy, float coverage);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
