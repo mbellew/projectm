@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <string>
@@ -679,7 +680,91 @@ void projectMSDL::resize(unsigned int width_, unsigned int height_)
         SDL_ShowCursor(_isFullScreen ? SDL_DISABLE : SDL_ENABLE);
     }
 
-    projectm_set_window_size(_projectM, _width, _height);
+    applyRenderSize();
+}
+
+void projectMSDL::applyRenderSize()
+{
+    // Keep the internal render height within [1080, 2160] with a single step from native:
+    // double if below, halve if above, otherwise render 1:1. A value still outside the range
+    // after one step is left as-is (per design). $PROJECTM_SUPERSAMPLE forces a fixed factor.
+    _ssScale = 1.0;
+    if (const char* s = std::getenv("PROJECTM_SUPERSAMPLE"); s && s[0])
+    {
+        const double forced = std::atof(s);
+        if (forced > 0.0)
+        {
+            _ssScale = std::min(4.0, std::max(0.25, forced));
+        }
+    }
+    else if (_height < 1080)
+    {
+        _ssScale = 2.0;
+    }
+    else if (_height > 2160)
+    {
+        _ssScale = 0.5;
+    }
+
+    _ssWidth = static_cast<size_t>(std::lround(static_cast<double>(_width) * _ssScale));
+    _ssHeight = static_cast<size_t>(std::lround(static_cast<double>(_height) * _ssScale));
+
+    projectm_set_window_size(_projectM, _ssWidth, _ssHeight);
+    ensureSupersampleTarget();
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[render] window %zux%zu -> internal %zux%zu (scale %.2f%s)",
+                _width, _height, _ssWidth, _ssHeight, _ssScale,
+                usesSupersampleTarget() ? "" : ", direct");
+}
+
+void projectMSDL::ensureSupersampleTarget()
+{
+    if (!usesSupersampleTarget())
+    {
+        // Rendering 1:1 to FBO 0; tear down any target left over from a prior size.
+        if (_ssFbo != 0) { glDeleteFramebuffers(1, &_ssFbo); _ssFbo = 0; }
+        if (_ssColorTex != 0) { glDeleteTextures(1, &_ssColorTex); _ssColorTex = 0; }
+        if (_ssDepthRbo != 0) { glDeleteRenderbuffers(1, &_ssDepthRbo); _ssDepthRbo = 0; }
+        return;
+    }
+
+    if (_ssColorTex == 0) { glGenTextures(1, &_ssColorTex); }
+    glBindTexture(GL_TEXTURE_2D, _ssColorTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(_ssWidth), static_cast<GLsizei>(_ssHeight),
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    if (_ssDepthRbo == 0) { glGenRenderbuffers(1, &_ssDepthRbo); }
+    glBindRenderbuffer(GL_RENDERBUFFER, _ssDepthRbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
+                          static_cast<GLsizei>(_ssWidth), static_cast<GLsizei>(_ssHeight));
+
+    if (_ssFbo == 0) { glGenFramebuffers(1, &_ssFbo); }
+    glBindFramebuffer(GL_FRAMEBUFFER, _ssFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _ssColorTex, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _ssDepthRbo);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "supersample FBO incomplete; falling back to direct 1:1 rendering");
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteFramebuffers(1, &_ssFbo); _ssFbo = 0;
+        glDeleteTextures(1, &_ssColorTex); _ssColorTex = 0;
+        glDeleteRenderbuffers(1, &_ssDepthRbo); _ssDepthRbo = 0;
+        // Render 1:1 instead, and tell projectM to match the window so the direct path is correct.
+        _ssScale = 1.0;
+        _ssWidth = _width;
+        _ssHeight = _height;
+        projectm_set_window_size(_projectM, _ssWidth, _ssHeight);
+        return;
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void projectMSDL::pollEvent()
@@ -819,10 +904,31 @@ void projectMSDL::renderFrame()
 {
     const auto frameStart = std::chrono::steady_clock::now();
 
-    glClearColor(0.0, 0.0, 0.0, 0.0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (usesSupersampleTarget() && _ssFbo != 0)
+    {
+        // Render the frame at the supersampled resolution into our offscreen FBO...
+        glBindFramebuffer(GL_FRAMEBUFFER, _ssFbo);
+        glViewport(0, 0, static_cast<GLsizei>(_ssWidth), static_cast<GLsizei>(_ssHeight));
+        glClearColor(0.0, 0.0, 0.0, 0.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    projectm_opengl_render_frame(_projectM);
+        projectm_opengl_render_frame_fbo(_projectM, _ssFbo);
+
+        // ...then resample it onto the window (linear filter = SSAA box-ish downsample).
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, _ssFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, static_cast<GLsizei>(_ssWidth), static_cast<GLsizei>(_ssHeight),
+                          0, 0, static_cast<GLsizei>(_width), static_cast<GLsizei>(_height),
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    else
+    {
+        glClearColor(0.0, 0.0, 0.0, 0.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        projectm_opengl_render_frame(_projectM);
+    }
 
     SDL_GL_SwapWindow(_sdlWindow);
 
@@ -865,7 +971,7 @@ void projectMSDL::trackFrameRate(std::chrono::steady_clock::time_point frameStar
 void projectMSDL::init(SDL_Window* window, const bool _renderToTexture)
 {
     _sdlWindow = window;
-    projectm_set_window_size(_projectM, _width, _height);
+    applyRenderSize();
 
 #ifdef WASAPI_LOOPBACK
     wasapi = true;

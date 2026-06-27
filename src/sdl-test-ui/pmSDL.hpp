@@ -228,6 +228,24 @@ private:
     size_t _height{0};
     size_t _fps{60};
 
+    // Supersampling. projectM renders into an offscreen FBO at _ssWidth x _ssHeight, then we
+    // blit (linear) onto the window. The render height is kept within [1080, 2160] by a single
+    // x2 / /2 step from native (so _ssScale is one of 0.5, 1, 2); if native is already in range
+    // we render 1:1 straight to FBO 0 and skip the offscreen path. $PROJECTM_SUPERSAMPLE (a
+    // float scale) forces a fixed factor for tuning. _width/_height stay = window size.
+    double _ssScale{1.0};
+    size_t _ssWidth{0};
+    size_t _ssHeight{0};
+    GLuint _ssFbo{0};
+    GLuint _ssColorTex{0};
+    GLuint _ssDepthRbo{0};
+    // True when the internal render size differs from the window, i.e. we need the offscreen path.
+    bool usesSupersampleTarget() const { return _ssWidth != _width || _ssHeight != _height; }
+    // Picks _ssScale from native height + env, sets projectM's render size, builds the target.
+    void applyRenderSize();
+    // (Re)creates the offscreen render target for the current _ssWidth/_ssHeight.
+    void ensureSupersampleTarget();
+
     bool _shuffle{true};
 
     // audio input device characteristics
