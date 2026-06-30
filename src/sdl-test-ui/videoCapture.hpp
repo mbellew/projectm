@@ -41,9 +41,16 @@ public:
      *        matched against device localized names (e.g. {"OBS", "FaceTime"}). The first
      *        enumerated device matching any entry, in list order, is chosen. An empty list
      *        (or no match) selects the system default video device.
+     * @param targetFps Desired capture frame rate (typically the display's target FPS). The
+     *        backend picks the highest-resolution mode that sustains this as a hard floor.
+     *        <= 0 leaves the rate unconstrained (backend default).
+     * @param displayAspect Output display aspect ratio (width/height, e.g. 16.0/9.0). When the
+     *        camera offers multiple aspect ratios, the one closest to this is preferred so the
+     *        captured frame matches the screen. <= 0 disables the aspect preference.
      * @return true if capture started; false if denied or unsupported.
      */
-    bool Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings = {});
+    bool Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings = {},
+               double targetFps = 0.0, double displayAspect = 0.0);
 
     /** Stops capture and releases the device. */
     void Stop();

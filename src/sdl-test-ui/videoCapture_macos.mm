@@ -100,8 +100,11 @@ VideoCapture::~VideoCapture()
     Stop();
 }
 
-bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings)
+bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings,
+                         double /*targetFps*/, double /*displayAspect*/)
 {
+    // AVFoundation session presets already track the display; the FPS/aspect hints are used by
+    // the V4L2 backend only.
     if (m_impl->running)
     {
         return false;

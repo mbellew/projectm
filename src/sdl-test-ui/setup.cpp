@@ -442,9 +442,13 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
 #endif
 
     // Allocate the video-history 3D texture BEFORE init() starts camera capture,
-    // otherwise frames between camera-start and configure are silently dropped.
-    // VGA spatial resolution, 120 frames of history.
-    projectm_video_configure(app->projectM(), 640, 480, 120);
+    // otherwise frames between camera-start and configure are silently dropped. Fixed 480px
+    // short side; the long side follows the fullscreen desktop aspect so the camera frame
+    // (negotiated to the same aspect) maps in without a horizontal squish. 120 frames of history.
+    int videoTexW = (height > 0) ? (480 * width + height / 2) / height : 640;
+    videoTexW &= ~1;                       // force even
+    if (videoTexW < 64) { videoTexW = 64; } // sane floor for odd/degenerate modes
+    projectm_video_configure(app->projectM(), videoTexW, 480, 120);
 
     // Optional global horizontal mirror of the camera feed ("Video Mirror" in config.inp).
     projectm_video_set_mirror(app->projectM(), videoMirror);

@@ -29,9 +29,11 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -116,6 +118,134 @@ inline void yuv2bgrx(int y, int u, int v, uint8_t* out)
     out[3] = 255;                                                 // X (opaque)
 }
 
+// Pixel formats we can turn into BGRX (see the frame-delivery path). MJPEG is decoded via stb.
+bool decodableFormat(uint32_t f)
+{
+    return f == V4L2_PIX_FMT_YUYV || f == V4L2_PIX_FMT_RGB24 ||
+           f == V4L2_PIX_FMT_BGR24 || f == V4L2_PIX_FMT_MJPEG;
+}
+
+// A concrete capture mode the driver advertises.
+struct CaptureFormat
+{
+    uint32_t pixelFormat{0};
+    int width{0};
+    int height{0};
+    double maxFps{0.0}; // best frame rate the driver offers at this (format,size)
+};
+
+// Highest frame rate available for a (format,size) via VIDIOC_ENUM_FRAMEINTERVALS. For
+// stepwise/continuous cameras the smallest interval (= max fps) is reported first.
+double maxFpsFor(int fd, uint32_t pf, int w, int h)
+{
+    v4l2_frmivalenum fi{};
+    fi.pixel_format = pf;
+    fi.width = static_cast<uint32_t>(w);
+    fi.height = static_cast<uint32_t>(h);
+    double best = 0.0;
+    for (fi.index = 0; xioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &fi) == 0; ++fi.index)
+    {
+        if (fi.type == V4L2_FRMIVAL_TYPE_DISCRETE)
+        {
+            if (fi.discrete.numerator > 0)
+            {
+                best = std::max(best, static_cast<double>(fi.discrete.denominator) /
+                                          static_cast<double>(fi.discrete.numerator));
+            }
+        }
+        else // stepwise / continuous: min interval = max fps
+        {
+            if (fi.stepwise.min.numerator > 0)
+            {
+                best = std::max(best, static_cast<double>(fi.stepwise.min.denominator) /
+                                          static_cast<double>(fi.stepwise.min.numerator));
+            }
+            break;
+        }
+    }
+    return best;
+}
+
+// Enumerate every decodable (format, size) the device offers, with its max fps.
+std::vector<CaptureFormat> enumerateFormats(int fd)
+{
+    std::vector<CaptureFormat> out;
+    v4l2_fmtdesc fmt{};
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    for (fmt.index = 0; xioctl(fd, VIDIOC_ENUM_FMT, &fmt) == 0; ++fmt.index)
+    {
+        if (!decodableFormat(fmt.pixelformat)) { continue; }
+        v4l2_frmsizeenum fs{};
+        fs.pixel_format = fmt.pixelformat;
+        for (fs.index = 0; xioctl(fd, VIDIOC_ENUM_FRAMESIZES, &fs) == 0; ++fs.index)
+        {
+            int w = 0, h = 0;
+            if (fs.type == V4L2_FRMSIZE_TYPE_DISCRETE)
+            {
+                w = static_cast<int>(fs.discrete.width);
+                h = static_cast<int>(fs.discrete.height);
+            }
+            else // stepwise/continuous: the maximum advertised size is the useful candidate
+            {
+                w = static_cast<int>(fs.stepwise.max_width);
+                h = static_cast<int>(fs.stepwise.max_height);
+            }
+            if (w > 0 && h > 0)
+            {
+                out.push_back({fmt.pixelformat, w, h, maxFpsFor(fd, fmt.pixelformat, w, h)});
+            }
+            if (fs.type != V4L2_FRMSIZE_TYPE_DISCRETE) { break; }
+        }
+    }
+    return out;
+}
+
+// True if this is an uncompressed layout (cheaper to decode than MJPEG); a tie-breaker.
+bool isUncompressed(uint32_t f) { return f != V4L2_PIX_FMT_MJPEG; }
+
+// Choose the best mode for our policy: FPS-first (hit targetFps as a hard floor), then the
+// aspect closest to the display, then the highest resolution, then uncompressed over MJPEG.
+// If nothing sustains targetFps, fall back to the fastest available (still max-area within that).
+// displayAspect <= 0 disables the aspect preference. Returns false if the device offers nothing.
+bool selectCaptureFormat(int fd, double targetFps, double displayAspect, CaptureFormat& out)
+{
+    std::vector<CaptureFormat> all = enumerateFormats(fd);
+    if (all.empty()) { return false; }
+
+    const double fpsFloor = (targetFps > 0.0) ? targetFps - 0.5 : 0.0;
+    auto meetsFps = [&](const CaptureFormat& c) { return c.maxFps + 1e-6 >= fpsFloor; };
+    const bool anyMeets = std::any_of(all.begin(), all.end(), meetsFps);
+
+    auto aspectDist = [&](const CaptureFormat& c) {
+        if (displayAspect <= 0.0 || c.height <= 0) { return 0.0; }
+        return std::fabs(static_cast<double>(c.width) / c.height - displayAspect);
+    };
+
+    auto better = [&](const CaptureFormat& a, const CaptureFormat& b) {
+        // 1. FPS-first: only when some mode meets the floor, meeting it beats not meeting it.
+        if (anyMeets && meetsFps(a) != meetsFps(b)) { return meetsFps(a); }
+        // 2. If no mode meets the floor, prefer the higher frame rate (get as close as we can).
+        if (!anyMeets && std::fabs(a.maxFps - b.maxFps) > 0.5) { return a.maxFps > b.maxFps; }
+        // 3. Aspect closest to the display (bucketed so near-equal aspects defer to resolution).
+        const double da = aspectDist(a), db = aspectDist(b);
+        if (std::fabs(da - db) > 0.05) { return da < db; }
+        // 4. Highest resolution.
+        const long areaA = static_cast<long>(a.width) * a.height;
+        const long areaB = static_cast<long>(b.width) * b.height;
+        if (areaA != areaB) { return areaA > areaB; }
+        // 5. Uncompressed (YUYV/RGB/BGR) over MJPEG at equal size.
+        if (isUncompressed(a.pixelFormat) != isUncompressed(b.pixelFormat))
+        {
+            return isUncompressed(a.pixelFormat);
+        }
+        return false;
+    };
+
+    out = *std::min_element(all.begin(), all.end(),
+                            [&](const CaptureFormat& a, const CaptureFormat& b) { return better(a, b); });
+    return true;
+}
+
 } // namespace
 
 struct VideoCapture::Impl
@@ -157,7 +287,8 @@ VideoCapture::~VideoCapture()
     Stop();
 }
 
-bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings)
+bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings,
+                         double targetFps, double displayAspect)
 {
     if (m_impl->running)
     {
@@ -215,14 +346,32 @@ bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>&
         return false;
     }
 
-    // Negotiate format: prefer YUYV at 640x480; accept whatever the driver settles on,
-    // as long as it's a layout we can convert (YUYV / RGB24 / BGR24).
+    // Pick the capture mode: highest resolution that sustains targetFps (FPS-first), with the
+    // aspect closest to the display preferred. Falls back to a plain 640x480 YUYV request if the
+    // device advertises nothing we can enumerate/decode.
     v4l2_format fmt{};
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = 640;
-    fmt.fmt.pix.height = 480;
-    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
     fmt.fmt.pix.field = V4L2_FIELD_NONE;
+
+    CaptureFormat chosenFmt{};
+    if (selectCaptureFormat(fd, targetFps, displayAspect, chosenFmt))
+    {
+        fmt.fmt.pix.width = static_cast<uint32_t>(chosenFmt.width);
+        fmt.fmt.pix.height = static_cast<uint32_t>(chosenFmt.height);
+        fmt.fmt.pix.pixelformat = chosenFmt.pixelFormat;
+        const char* cc = reinterpret_cast<const char*>(&chosenFmt.pixelFormat);
+        std::fprintf(stderr,
+                     "[VideoCapture] Selected mode %dx%d @%.0ffps '%c%c%c%c' (target %.0ffps, display aspect %.3f).\n",
+                     chosenFmt.width, chosenFmt.height, chosenFmt.maxFps,
+                     cc[0], cc[1], cc[2], cc[3], targetFps, displayAspect);
+    }
+    else
+    {
+        fmt.fmt.pix.width = 640;
+        fmt.fmt.pix.height = 480;
+        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+    }
+
     if (xioctl(fd, VIDIOC_S_FMT, &fmt) == -1)
     {
         std::fprintf(stderr, "[VideoCapture] VIDIOC_S_FMT failed on %s: %s\n", chosen->path.c_str(), std::strerror(errno));
@@ -230,21 +379,16 @@ bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>&
         return false;
     }
 
-    auto handled = [](uint32_t f) {
-        return f == V4L2_PIX_FMT_YUYV || f == V4L2_PIX_FMT_RGB24 ||
-               f == V4L2_PIX_FMT_BGR24 || f == V4L2_PIX_FMT_MJPEG;
-    };
-
     // If the driver substituted a format we can't decode (e.g. an MJPEG-only cam
-    // ignored the YUYV request and picked something else), explicitly ask for MJPEG.
-    if (!handled(fmt.fmt.pix.pixelformat))
+    // ignored the request and picked something else), explicitly ask for MJPEG.
+    if (!decodableFormat(fmt.fmt.pix.pixelformat))
     {
         fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;
         xioctl(fd, VIDIOC_S_FMT, &fmt);
     }
 
     const uint32_t pf = fmt.fmt.pix.pixelformat;
-    if (!handled(pf))
+    if (!decodableFormat(pf))
     {
         const char* fourcc = reinterpret_cast<const char*>(&fmt.fmt.pix.pixelformat);
         std::fprintf(stderr,
@@ -252,6 +396,17 @@ bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>&
                      chosen->path.c_str(), fourcc[0], fourcc[1], fourcc[2], fourcc[3]);
         close(fd);
         return false;
+    }
+
+    // Ask the driver to run at the target rate (best-effort; it snaps to the nearest supported
+    // interval). Matching the display FPS keeps one fresh history slice per rendered frame.
+    if (targetFps > 0.0)
+    {
+        v4l2_streamparm parm{};
+        parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        parm.parm.capture.timeperframe.numerator = 1;
+        parm.parm.capture.timeperframe.denominator = static_cast<uint32_t>(std::lround(targetFps));
+        xioctl(fd, VIDIOC_S_PARM, &parm); // ignore failure; not all drivers honor S_PARM
     }
 
     m_impl->width = static_cast<int>(fmt.fmt.pix.width);

@@ -48,6 +48,19 @@ auto dispatchLoadProc(const char* name, void* userData) -> void*
     // Dispatch load proc to SDL
     return SDL_GL_GetProcAddress(name);
 }
+
+// Aspect ratio (w/h) of the physical fullscreen display. Camera capture is negotiated once at
+// startup, so it targets the stable desktop aspect rather than the (resizable) window. Returns
+// 0 when unknown, which disables the capture-side aspect preference.
+auto desktopAspect() -> double
+{
+    SDL_DisplayMode dm;
+    if (SDL_GetDesktopDisplayMode(0, &dm) == 0 && dm.h > 0)
+    {
+        return static_cast<double>(dm.w) / static_cast<double>(dm.h);
+    }
+    return 0.0;
+}
 } // namespace
 
 projectMSDL::projectMSDL(SDL_GLContext glCtx, const std::string& presetPath)
@@ -293,7 +306,8 @@ void projectMSDL::startVideoCapture()
                         }
                         projectm_video_set_seg_centroid(handle, cx, cy, coverage);
                     },
-                    preferredDevices);
+                    preferredDevices,
+                    static_cast<double>(_fps), desktopAspect());
                 if (segOk)
                 {
                     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -367,7 +381,8 @@ void projectMSDL::startVideoCapture()
             projectm_video_submit_frame(handle, data, static_cast<unsigned int>(width),
                                         static_cast<unsigned int>(height), pmFmt);
         },
-        preferredDevices);
+        preferredDevices,
+        static_cast<double>(_fps), desktopAspect());
 
     if (!ok)
     {
