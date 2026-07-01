@@ -203,9 +203,16 @@ std::vector<CaptureFormat> enumerateFormats(int fd)
 // True if this is an uncompressed layout (cheaper to decode than MJPEG); a tie-breaker.
 bool isUncompressed(uint32_t f) { return f != V4L2_PIX_FMT_MJPEG; }
 
+// Capture resolution cap. The frame is downscaled into a ~852x480 history texture and a 512px
+// seg model, so anything past ~1080p buys no quality -- it only adds MJPEG-decode and CPU
+// downscale latency on the capture thread (a 4K webcam otherwise wins the "max resolution" tie
+// and makes the feed laggy). Prefer the largest mode at or under this; only exceed it if the
+// camera offers nothing smaller.
+constexpr long kMaxCaptureArea = 1920L * 1080L;
+
 // Choose the best mode for our policy: FPS-first (hit targetFps as a hard floor), then the
-// aspect closest to the display, then the highest resolution, then uncompressed over MJPEG.
-// If nothing sustains targetFps, fall back to the fastest available (still max-area within that).
+// aspect closest to the display, then the highest resolution at or under kMaxCaptureArea, then
+// uncompressed over MJPEG. If nothing sustains targetFps, fall back to the fastest available.
 // displayAspect <= 0 disables the aspect preference. Returns false if the device offers nothing.
 bool selectCaptureFormat(int fd, double targetFps, double displayAspect, CaptureFormat& out)
 {
@@ -229,10 +236,14 @@ bool selectCaptureFormat(int fd, double targetFps, double displayAspect, Capture
         // 3. Aspect closest to the display (bucketed so near-equal aspects defer to resolution).
         const double da = aspectDist(a), db = aspectDist(b);
         if (std::fabs(da - db) > 0.05) { return da < db; }
-        // 4. Highest resolution.
+        // 4. Highest resolution, but capped: prefer the largest mode at or under kMaxCaptureArea
+        //    (more than that only adds latency). If both exceed the cap, take the smaller one.
         const long areaA = static_cast<long>(a.width) * a.height;
         const long areaB = static_cast<long>(b.width) * b.height;
-        if (areaA != areaB) { return areaA > areaB; }
+        const bool aIn = areaA <= kMaxCaptureArea;
+        const bool bIn = areaB <= kMaxCaptureArea;
+        if (aIn != bIn) { return aIn; }
+        if (areaA != areaB) { return aIn ? (areaA > areaB) : (areaA < areaB); }
         // 5. Uncompressed (YUYV/RGB/BGR) over MJPEG at equal size.
         if (isUncompressed(a.pixelFormat) != isUncompressed(b.pixelFormat))
         {
