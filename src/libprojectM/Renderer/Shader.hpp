@@ -12,6 +12,8 @@
 #include <glm/mat3x4.hpp>
 #include <glm/mat4x4.hpp>
 
+#include <cstdint>
+#include <filesystem>
 #include <map>
 #include <string>
 
@@ -193,6 +195,27 @@ private:
      * @return The shader ID.
      */
     auto CompileShader(const std::string& source, GLenum type) -> GLuint;
+
+    /**
+     * @brief Tries to restore a previously linked program from the disk cache.
+     * @return true if a matching, driver-accepted binary was loaded into the program.
+     */
+    bool LoadCachedProgram(const std::filesystem::path& cacheFile,
+                           std::uint64_t contextHash,
+                           std::uint64_t vertexHash,
+                           std::uint64_t fragmentHash,
+                           const std::string& vertexShaderSource,
+                           const std::string& fragmentShaderSource);
+
+    /**
+     * @brief Writes the freshly linked program binary to the disk cache.
+     */
+    void SaveCachedProgram(const std::filesystem::path& cacheFile,
+                           std::uint64_t contextHash,
+                           std::uint64_t vertexHash,
+                           std::uint64_t fragmentHash,
+                           const std::string& vertexShaderSource,
+                           const std::string& fragmentShaderSource) const;
 
     GLuint m_shaderProgram{}; //!< The program ID.
 };
