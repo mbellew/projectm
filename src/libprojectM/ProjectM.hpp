@@ -363,6 +363,9 @@ private:
     //! Advances the smoothed person-seg centroid one frame (called from RenderFrame).
     void UpdateSegState(double dtSeconds);
 
+    //! Finite-differences the touch point's velocity one frame (called from RenderFrame).
+    void UpdateTouchState(double dtSeconds);
+
     uint32_t m_meshX{32};            //!< Per-point mesh horizontal resolution.
     uint32_t m_meshY{24};            //!< Per-point mesh vertical resolution.
     uint32_t m_targetFps{35};        //!< Target frames per second.
@@ -427,6 +430,21 @@ private:
     float m_segVy{0.0f};                          //!< Smoothed centroid velocity Y (seg_vy), /sec.
     float m_segCoverage{0.0f};                    //!< Smoothed foreground fraction (seg_coverage).
     float m_segValid{0.0f};                       //!< 1.0 when a confident mask is present (seg_valid).
+
+    // Single arbitrated touch point. The app writes the measured values via Touch/TouchDrag/
+    // TouchDestroy (mouse handler today, pose bridge later); UpdateTouchState finite-differences
+    // velocity once per frame into the touch_* outputs exposed through RenderContext. Position and
+    // pressure pass through directly (responsive); any smoothing is the caller's job. Callers are
+    // expected on the app/render thread (like the SDL mouse handler), so plain members suffice.
+    bool m_touchActive{false};      //!< True between Touch and TouchDestroy (touch_on).
+    float m_touchX{0.5f};           //!< Latest touch X, [0,1] left to right (touch_x).
+    float m_touchY{0.5f};           //!< Latest touch Y, [0,1] bottom to top (touch_y).
+    float m_touchPressure{0.0f};    //!< Latest touch pressure, [0,1] (touch_pressure).
+    float m_touchVx{0.0f};          //!< Smoothed touch X velocity, /sec (touch_vx).
+    float m_touchVy{0.0f};          //!< Smoothed touch Y velocity, /sec (touch_vy).
+    float m_touchPrevX{0.5f};       //!< Previous-frame X for velocity finite-differencing.
+    float m_touchPrevY{0.5f};       //!< Previous-frame Y for velocity finite-differencing.
+    bool m_touchWasActive{false};   //!< Active state last frame (suppresses spawn/release velocity spikes).
 };
 
 } // namespace libprojectM

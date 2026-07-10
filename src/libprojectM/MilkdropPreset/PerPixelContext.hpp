@@ -113,6 +113,12 @@ public:
     PRJM_EVAL_F* seg_vy{};       //!< Person-seg centroid velocity Y, screen-fractions/sec.
     PRJM_EVAL_F* seg_coverage{}; //!< Person-seg foreground fraction, 0..1.
     PRJM_EVAL_F* seg_valid{};    //!< 1.0 when a confident mask is present, else 0.0.
+    PRJM_EVAL_F* touch_on{};       //!< 1.0 while a touch is active, else 0.0.
+    PRJM_EVAL_F* touch_x{};        //!< Touch X, 0..1 left to right.
+    PRJM_EVAL_F* touch_y{};        //!< Touch Y, 0..1 bottom to top.
+    PRJM_EVAL_F* touch_pressure{}; //!< Touch pressure, 0..1 (0 if the source has no pressure axis).
+    PRJM_EVAL_F* touch_vx{};       //!< Touch X velocity, screen-fractions/sec.
+    PRJM_EVAL_F* touch_vy{};       //!< Touch Y velocity, screen-fractions/sec.
     PRJM_EVAL_F* frame{};
     PRJM_EVAL_F* q_vars[QVarCount]{};
     PRJM_EVAL_F* progress{};

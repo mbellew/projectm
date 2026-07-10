@@ -152,8 +152,16 @@ void ProjectM::RenderFrame(uint32_t targetFramebufferObject /*= 0*/)
     // Update the smoothed person-seg centroid (eases to center when the mask is weak/gone).
     UpdateSegState(m_timeKeeper->SecondsSinceLastFrame());
 
-    // Check if the preset isn't locked, and we've not already notified the user
-    if (!m_presetChangeNotified)
+    // Finite-difference the touch point's velocity for touch_vx/touch_vy.
+    UpdateTouchState(m_timeKeeper->SecondsSinceLastFrame());
+
+    // Check if the preset isn't locked, we've not already notified the user, and a
+    // soft-cut transition isn't still in flight. The transitioning-preset guard closes
+    // a window where the smoothing timer has ended (IsSmoothing() == false) but the new
+    // preset has not yet become active this frame: without it, a preset that keeps
+    // asserting `preset_complete` (or whose duration has elapsed) re-fires the switch and
+    // double-switches / skips the next preset.
+    if (!m_presetChangeNotified && m_transitioningPreset == nullptr)
     {
         // If preset is done (scheduled duration elapsed, or the preset asked to end via
         // the per-frame `preset_complete` flag) and we're not already switching.
@@ -580,24 +588,40 @@ auto ProjectM::PCM() -> libprojectM::Audio::PCM&
     return m_audioStorage;
 }
 
-void ProjectM::Touch(float, float, int, int)
+void ProjectM::Touch(float touchX, float touchY, int pressure, int /*touchType*/)
 {
-    // UNIMPLEMENTED
+    // Begin (or recenter) the single touch point. Coordinates arrive in [0,1] with Y bottom to
+    // top, matching the seg_* convention; the caller owns any mirror/undistort. The historical
+    // touch_type (which built-in waveform to draw) is captured for the deferred default-waveform
+    // feature but does not affect the touch_* eval inputs.
+    m_touchX = touchX;
+    m_touchY = touchY;
+    m_touchPressure = std::clamp(static_cast<float>(pressure), 0.0f, 1.0f);
+    m_touchActive = true;
 }
 
-void ProjectM::TouchDrag(float, float, int)
+void ProjectM::TouchDrag(float touchX, float touchY, int pressure)
 {
-    // UNIMPLEMENTED
+    // Move the active touch point. Treat a drag with no prior Touch as an implicit down so
+    // touch_on tracks the pointer either way.
+    m_touchX = touchX;
+    m_touchY = touchY;
+    m_touchPressure = std::clamp(static_cast<float>(pressure), 0.0f, 1.0f);
+    m_touchActive = true;
 }
 
 void ProjectM::TouchDestroy(float, float)
 {
-    // UNIMPLEMENTED
+    // Release the touch point. Scalar single-point model ignores the coordinates (there is only
+    // one point to end); they remain in the API for multi-point compatibility.
+    m_touchActive = false;
+    m_touchPressure = 0.0f;
 }
 
 void ProjectM::TouchDestroyAll()
 {
-    // UNIMPLEMENTED
+    m_touchActive = false;
+    m_touchPressure = 0.0f;
 }
 
 void ProjectM::VideoConfigure(int width, int height, int depth)
@@ -746,6 +770,34 @@ void ProjectM::UpdateSegState(double dtSeconds)
     m_segValid = (confidence > 0.5f) ? 1.0f : 0.0f;
 }
 
+void ProjectM::UpdateTouchState(double dtSeconds)
+{
+    const float dt = static_cast<float>(dtSeconds);
+
+    // Velocity from the finite-differenced touch position (screen-fractions/sec), lightly EMA-
+    // smoothed to shed single-frame jitter. Zeroed on the frame a touch begins or ends so a
+    // spawn/release doesn't register as a phantom sweep across the screen.
+    constexpr float kTauVel = 0.10f; // s, velocity smoothing (matches the seg gate)
+
+    if (m_touchActive && m_touchWasActive && dt > 1.0e-5f)
+    {
+        const float instVx = (m_touchX - m_touchPrevX) / dt;
+        const float instVy = (m_touchY - m_touchPrevY) / dt;
+        const float av = 1.0f - std::exp(-dt / kTauVel);
+        m_touchVx += (instVx - m_touchVx) * av;
+        m_touchVy += (instVy - m_touchVy) * av;
+    }
+    else
+    {
+        m_touchVx = 0.0f;
+        m_touchVy = 0.0f;
+    }
+
+    m_touchPrevX = m_touchX;
+    m_touchPrevY = m_touchY;
+    m_touchWasActive = m_touchActive;
+}
+
 auto ProjectM::GetRenderContext() -> Renderer::RenderContext
 {
     Renderer::RenderContext ctx{};
@@ -784,6 +836,13 @@ auto ProjectM::GetRenderContext() -> Renderer::RenderContext
     ctx.segVy = m_segVy;
     ctx.segCoverage = m_segCoverage;
     ctx.segValid = m_segValid;
+
+    ctx.touchOn = m_touchActive ? 1.0f : 0.0f;
+    ctx.touchX = m_touchX;
+    ctx.touchY = m_touchY;
+    ctx.touchPressure = m_touchPressure;
+    ctx.touchVx = m_touchVx;
+    ctx.touchVy = m_touchVy;
 
     if (m_transition)
     {

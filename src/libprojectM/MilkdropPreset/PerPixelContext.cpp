@@ -59,6 +59,12 @@ void PerPixelContext::RegisterBuiltinVariables()
     REG_VAR(seg_vy);
     REG_VAR(seg_coverage);
     REG_VAR(seg_valid);
+    REG_VAR(touch_on);
+    REG_VAR(touch_x);
+    REG_VAR(touch_y);
+    REG_VAR(touch_pressure);
+    REG_VAR(touch_vx);
+    REG_VAR(touch_vy);
     REG_VAR(frame);
     REG_VAR(x);
     REG_VAR(y);
@@ -96,6 +102,12 @@ void PerPixelContext::LoadStateReadOnlyVariables(PresetState& state, PerFrameCon
     *seg_vy = static_cast<PRJM_EVAL_F>(state.renderContext.segVy);
     *seg_coverage = static_cast<PRJM_EVAL_F>(state.renderContext.segCoverage);
     *seg_valid = static_cast<PRJM_EVAL_F>(state.renderContext.segValid);
+    *touch_on = static_cast<PRJM_EVAL_F>(state.renderContext.touchOn);
+    *touch_x = static_cast<PRJM_EVAL_F>(state.renderContext.touchX);
+    *touch_y = static_cast<PRJM_EVAL_F>(state.renderContext.touchY);
+    *touch_pressure = static_cast<PRJM_EVAL_F>(state.renderContext.touchPressure);
+    *touch_vx = static_cast<PRJM_EVAL_F>(state.renderContext.touchVx);
+    *touch_vy = static_cast<PRJM_EVAL_F>(state.renderContext.touchVy);
     *meshx = static_cast<PRJM_EVAL_F>(state.renderContext.perPixelMeshX);
     *meshy = static_cast<PRJM_EVAL_F>(state.renderContext.perPixelMeshY);
     *pixelsx = static_cast<PRJM_EVAL_F>(state.renderContext.viewportSizeX);
@@ -131,6 +143,12 @@ void PerPixelContext::CopyPerFrameState(const PerPixelContext& source)
     *seg_vy = *source.seg_vy;
     *seg_coverage = *source.seg_coverage;
     *seg_valid = *source.seg_valid;
+    *touch_on = *source.touch_on;
+    *touch_x = *source.touch_x;
+    *touch_y = *source.touch_y;
+    *touch_pressure = *source.touch_pressure;
+    *touch_vx = *source.touch_vx;
+    *touch_vy = *source.touch_vy;
     *meshx = *source.meshx;
     *meshy = *source.meshy;
     *pixelsx = *source.pixelsx;

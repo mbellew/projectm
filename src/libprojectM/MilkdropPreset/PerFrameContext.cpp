@@ -62,6 +62,12 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(seg_vy);
     REG_VAR(seg_coverage);
     REG_VAR(seg_valid);
+    REG_VAR(touch_on);
+    REG_VAR(touch_x);
+    REG_VAR(touch_y);
+    REG_VAR(touch_pressure);
+    REG_VAR(touch_vx);
+    REG_VAR(touch_vy);
     REG_VAR(preset_complete);
     REG_VAR(frame);
     REG_VAR(decay);
@@ -214,6 +220,12 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *seg_vy = static_cast<PRJM_EVAL_F>(state.renderContext.segVy);
     *seg_coverage = static_cast<PRJM_EVAL_F>(state.renderContext.segCoverage);
     *seg_valid = static_cast<PRJM_EVAL_F>(state.renderContext.segValid);
+    *touch_on = static_cast<PRJM_EVAL_F>(state.renderContext.touchOn);
+    *touch_x = static_cast<PRJM_EVAL_F>(state.renderContext.touchX);
+    *touch_y = static_cast<PRJM_EVAL_F>(state.renderContext.touchY);
+    *touch_pressure = static_cast<PRJM_EVAL_F>(state.renderContext.touchPressure);
+    *touch_vx = static_cast<PRJM_EVAL_F>(state.renderContext.touchVx);
+    *touch_vy = static_cast<PRJM_EVAL_F>(state.renderContext.touchVy);
     *preset_complete = 0.0; // Output flag: cleared each frame; the preset re-asserts it to stay "done".
     *frame = static_cast<PRJM_EVAL_F>(state.renderContext.frame);
     for (int q = 0; q < QVarCount; q++)

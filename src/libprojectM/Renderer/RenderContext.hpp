@@ -61,6 +61,16 @@ public:
     float segVy{0.0f};       //!< Centroid velocity Y, screen-fractions/sec (seg_vy).
     float segCoverage{0.0f}; //!< Foreground fraction of the frame, [0,1] (seg_coverage).
     float segValid{0.0f};    //!< 1.0 when a confident mask is present, else 0.0 (seg_valid).
+
+    // Single arbitrated touch point, exposed to presets as touch_* eval variables. Written by
+    // ProjectM::Touch/TouchDrag/TouchDestroy (mouse today, pose bridge later). Coordinate
+    // convention matches seg_* exactly (Y bottom to top) so presets treat them interchangeably.
+    float touchOn{0.0f};       //!< 1.0 while a touch is active, else 0.0 (touch_on).
+    float touchX{0.5f};        //!< Touch X, [0,1] left to right (touch_x).
+    float touchY{0.5f};        //!< Touch Y, [0,1] bottom to top (touch_y).
+    float touchPressure{0.0f}; //!< Touch pressure, [0,1]; 0 if the source has no pressure axis (touch_pressure).
+    float touchVx{0.0f};       //!< Touch X velocity, screen-fractions/sec (touch_vx).
+    float touchVy{0.0f};       //!< Touch Y velocity, screen-fractions/sec (touch_vy).
 };
 
 } // namespace Renderer
