@@ -267,11 +267,62 @@ void projectMSDL::startVideoCapture()
                 // video_alpha_mode (default 0/Source) decides whether to use it.
                 auto* masker = _segMasker.get();
                 auto outBuf = std::make_shared<std::vector<uint8_t>>();
+
+                // Optional body-pose model for the pose->touch bridge: $PROJECTM_POSE_MODEL >
+                // "Video Pose Model". When present, YOLO-pose runs on the same un-mirrored frame
+                // as seg (shared coordinate space). Tracker-first: for now it only logs detections.
+                PoseTracker* pose = nullptr;
+                if (PoseTracker::IsSupported())
+                {
+                    std::string poseModel;
+                    if (const char* env = std::getenv("PROJECTM_POSE_MODEL"); env && env[0])
+                    {
+                        poseModel = env;
+                    }
+                    else if (!_poseModelPath.empty())
+                    {
+                        poseModel = _poseModelPath;
+                    }
+                    if (!poseModel.empty())
+                    {
+                        if (!_poseTracker)
+                        {
+                            _poseTracker = std::make_unique<PoseTracker>();
+                        }
+                        if (_poseTracker->IsLoaded() || _poseTracker->Load(poseModel))
+                        {
+                            pose = _poseTracker.get();
+                            if (!_poseBridge)
+                            {
+                                PoseTouchParams params;
+                                params.refFps = static_cast<float>(_fps);
+                                params.ReadEnvOverrides();
+                                _poseBridge = std::make_unique<PoseTouchBridge>(params);
+                            }
+                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                        "Body-pose tracking active (pose->touch bridge).");
+                        }
+                    }
+                }
+
+                // Pose->touch confidence tuning (env, live). confFloor: drop wrists below this raw
+                // keypoint confidence. alphaFloor: how much a wrist OFF the seg matte keeps of its
+                // confidence (1.0 = ignore the matte entirely). A fast-waving hand is often clipped
+                // by the matte, so the alpha weighting must stay gentle or it erases the gesture.
+                auto envF = [](const char* n, float d) {
+                    const char* v = std::getenv(n);
+                    return (v && v[0]) ? static_cast<float>(std::atof(v)) : d;
+                };
+                const float confFloor = envF("PROJECTM_POSE_CONF_FLOOR", 0.15f);
+                // 0.7 = an off-matte wrist keeps 70% of its confidence. A fast wave is often clipped
+                // by the seg matte, so this must stay high or the gesture we track gets erased.
+                const float alphaFloor = envF("PROJECTM_POSE_ALPHA_FLOOR", 0.7f);
+
                 // Library owns the mirror (projectm_video_set_mirror), so the matte
                 // travels with the RGB either way — seg passes mirror=false.
                 const bool segOk = _videoCapture->Start(
-                    [handle, masker, outBuf](const void* data, int width, int height,
-                                             VideoCapture::PixelFormat /*fmt*/) {
+                    [handle, masker, outBuf, pose, this, confFloor, alphaFloor](
+                        const void* data, int width, int height, VideoCapture::PixelFormat /*fmt*/) {
                         masker->Process(static_cast<const uint8_t*>(data), width, height,
                                         /*mirror=*/false, *outBuf);
                         projectm_video_submit_frame(handle, outBuf->data(),
@@ -279,7 +330,20 @@ void projectMSDL::startVideoCapture()
                                                     static_cast<unsigned int>(height),
                                                     PROJECTM_VIDEO_FORMAT_RGBA);
 
-                        // Alpha-weighted centroid of the matte -> seg_* preset variables.
+                        // Run body-pose first (if enabled): its torso keypoints give a better
+                        // "center" than the matte centroid, and its wrists drive the touch bridge.
+                        static std::vector<PersonPose> poses;
+                        if (pose)
+                        {
+                            pose->Process(static_cast<const uint8_t*>(data), width, height,
+                                          /*mirror=*/false, poses);
+                        }
+                        else
+                        {
+                            poses.clear();
+                        }
+
+                        // Alpha-weighted centroid of the matte (the fallback "center") -> seg_*.
                         // Row 0 is the top of the frame; flip Y so cy matches preset per-pixel
                         // y (bottom-up). The library applies mirror and all smoothing.
                         const uint8_t* px = outBuf->data();
@@ -304,7 +368,86 @@ void projectMSDL::startVideoCapture()
                             cy = static_cast<float>(sumYA / sumA);
                             coverage = static_cast<float>(sumA / (static_cast<double>(width) * height));
                         }
+
+                        // Prefer a pose-derived chest/heart point when a confident torso is present:
+                        // the matte centroid sits at the belly-button, whereas the shoulder midpoint
+                        // dropped ~25% toward the hips is roughly the sternum. Un-mirrored, like the
+                        // matte centroid (the library mirrors internally). Best (first) person only.
+                        if (!poses.empty())
+                        {
+                            const PersonPose& p = poses.front();
+                            const Keypoint& ls = p[Kpt::LeftShoulder];
+                            const Keypoint& rs = p[Kpt::RightShoulder];
+                            if (ls.conf > 0.4f && rs.conf > 0.4f)
+                            {
+                                float chestX = (ls.x + rs.x) * 0.5f;
+                                float chestY = (ls.y + rs.y) * 0.5f;
+                                const Keypoint& lh = p[Kpt::LeftHip];
+                                const Keypoint& rh = p[Kpt::RightHip];
+                                if (lh.conf > 0.3f && rh.conf > 0.3f)
+                                {
+                                    chestX += 0.25f * ((lh.x + rh.x) * 0.5f - chestX);
+                                    chestY += 0.25f * ((lh.y + rh.y) * 0.5f - chestY);
+                                }
+                                else
+                                {
+                                    chestY -= 0.06f; // no hips: nudge just below the shoulder line
+                                }
+                                cx = std::clamp(chestX, 0.0f, 1.0f);
+                                cy = std::clamp(chestY, 0.0f, 1.0f);
+                            }
+                        }
                         projectm_video_set_seg_centroid(handle, cx, cy, coverage);
+
+                        // Turn each detected wrist into a HandObservation (seg-fused: matte alpha
+                        // weights confidence, depth = wrist closeness) and stash for the main-thread
+                        // bridge drain. projectm_touch* is main-thread-only, so we do NOT call it here.
+                        if (pose)
+                        {
+                            const uint8_t* rgba = outBuf->data();
+                            auto sampleAlpha = [&](float nx, float ny) -> float {
+                                // nx left->right, ny bottom-up; RGBA row 0 is the top of the frame.
+                                const int col = std::clamp(static_cast<int>(nx * (width - 1) + 0.5f), 0, width - 1);
+                                const int row = std::clamp(static_cast<int>((1.0f - ny) * (height - 1) + 0.5f), 0, height - 1);
+                                return rgba[(static_cast<size_t>(row) * width + col) * 4 + 3] / 255.0f;
+                            };
+                            auto addHand = [&](std::vector<HandObservation>& hands, const Keypoint& wrist,
+                                               const Keypoint& elbow, const Keypoint& shoulder) {
+                                if (wrist.conf < confFloor) { return; } // ignore very uncertain wrists
+                                const float rawX = wrist.x; // un-mirrored camera space (matches matte/depth)
+                                const float rawY = wrist.y;
+                                const float alpha = sampleAlpha(rawX, rawY);
+                                const float depth = masker->HasDepth() ? masker->SampleDepth(rawX, rawY) : -1.0f;
+                                // Matte-alpha weights confidence but never fully kills it (the matte
+                                // clips fast-moving hands -- the very thing we track). alphaFloor sets
+                                // how much an off-matte wrist keeps.
+                                HandObservation obs;
+                                obs.x = _videoMirror ? (1.0f - rawX) : rawX;
+                                obs.y = rawY;
+                                obs.conf = wrist.conf * (alphaFloor + (1.0f - alphaFloor) * alpha);
+                                obs.depth = depth;
+                                // Raised: wrist above the shoulder (bottom-up y), gated on decent conf.
+                                obs.raised = (shoulder.conf > 0.3f)
+                                                 ? std::clamp((wrist.y - shoulder.y) * 3.0f + 0.5f, 0.0f, 1.0f)
+                                                 : 0.0f;
+                                (void)elbow;
+                                hands.push_back(obs);
+                            };
+
+                            std::vector<HandObservation> hands;
+                            hands.reserve(poses.size() * 2);
+                            for (const auto& p : poses)
+                            {
+                                addHand(hands, p[Kpt::LeftWrist], p[Kpt::LeftElbow], p[Kpt::LeftShoulder]);
+                                addHand(hands, p[Kpt::RightWrist], p[Kpt::RightElbow], p[Kpt::RightShoulder]);
+                            }
+
+                            {
+                                std::lock_guard<std::mutex> lock(_poseMutex);
+                                _poseHands.swap(hands);
+                                _poseFresh = true;
+                            }
+                        }
                     },
                     preferredDevices,
                     static_cast<double>(_fps), desktopAspect());
@@ -786,9 +929,7 @@ void projectMSDL::pollEvent()
 {
     SDL_Event evt;
 
-    int mousex = 0;
     float mousexscale = 0;
-    int mousey = 0;
     float mouseyscale = 0;
     int mousepressure = 0;
     while (SDL_PollEvent(&evt))
@@ -821,11 +962,8 @@ void projectMSDL::pollEvent()
                     // if it's the first mouse down event (since mouse up or since SDL was launched)
                     if (!mouseDown)
                     {
-                        // Get mouse coorindates when you click.
-                        SDL_GetMouseState(&mousex, &mousey);
-                        // Scale those coordinates. libProjectM supports a scale of 0.1 instead of absolute pixel coordinates.
-                        mousexscale = (mousex / (float) _width);
-                        mouseyscale = ((_height - mousey) / (float) _height);
+                        // Normalize to [0,1] against the window point size (HiDPI-correct).
+                        normalizedMouse(mousexscale, mouseyscale);
                         // Touch. By not supplying a touch type, we will default to random.
                         touch(mousexscale, mouseyscale, mousepressure);
                         mouseDown = true;
@@ -843,19 +981,21 @@ void projectMSDL::pollEvent()
                         break;
                     }
 
-                    // Right Click
-                    SDL_GetMouseState(&mousex, &mousey);
-
-                    // Scale those coordinates. libProjectM supports a scale of 0.1 instead of absolute pixel coordinates.
-                    mousexscale = (mousex / (float) _width);
-                    mouseyscale = ((_height - mousey) / (float) _height);
-
-                    // Destroy at the coordinates we clicked.
+                    // Right Click — normalize (HiDPI-correct) and destroy at that point.
+                    normalizedMouse(mousexscale, mouseyscale);
                     touchDestroy(mousexscale, mouseyscale);
                 }
                 break;
 
             case SDL_MOUSEBUTTONUP:
+                // On left-button release, end the touch so touch_on falls back to 0 (the point is
+                // "up"). This mirrors the pose bridge's UP state and keeps the touch_* built-ins
+                // tracking "is the pointer down" rather than latching on after a single click.
+                if (evt.button.button == SDL_BUTTON_LEFT && mouseDown)
+                {
+                    normalizedMouse(mousexscale, mouseyscale);
+                    touchDestroy(mousexscale, mouseyscale);
+                }
                 mouseDown = false;
                 break;
 
@@ -868,14 +1008,30 @@ void projectMSDL::pollEvent()
     // Handle dragging your waveform when mouse is down.
     if (mouseDown)
     {
-        // Get mouse coordinates when you click.
-        SDL_GetMouseState(&mousex, &mousey);
-        // Scale those coordinates. libProjectM supports a scale of 0.1 instead of absolute pixel coordinates.
-        mousexscale = (mousex / (float) _width);
-        mouseyscale = ((_height - mousey) / (float) _height);
-        // Drag Touch.
+        // Normalize to [0,1] against the window point size (HiDPI-correct), then drag.
+        normalizedMouse(mousexscale, mouseyscale);
         touchDrag(mousexscale, mouseyscale, mousepressure);
     }
+}
+
+// Normalize the current mouse position to [0,1], Y bottom-to-top. Divides by the window's POINT
+// size (SDL_GetWindowSize) rather than _width/_height, which hold the drawable PIXEL size — on
+// HiDPI/Retina those differ by the display scale, so using pixels here squashes the range (e.g.
+// 0..0.5 at 2x). Mouse coordinates are in points, so points/points gives a correct [0,1].
+void projectMSDL::normalizedMouse(float& x, float& y)
+{
+    int mx = 0, my = 0;
+    SDL_GetMouseState(&mx, &my);
+    int winW = 0, winH = 0;
+    SDL_GetWindowSize(_sdlWindow, &winW, &winH);
+    if (winW <= 0 || winH <= 0)
+    {
+        x = 0.0f;
+        y = 0.0f;
+        return;
+    }
+    x = static_cast<float>(mx) / static_cast<float>(winW);
+    y = static_cast<float>(winH - my) / static_cast<float>(winH);
 }
 
 // This touches the screen to generate a waveform at X / Y.
@@ -915,9 +1071,75 @@ void projectMSDL::playInitialPreset()
     }
 }
 
+void projectMSDL::drainPoseTouch()
+{
+#ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
+    if (!_poseBridge)
+    {
+        return;
+    }
+
+    std::vector<HandObservation> hands;
+    {
+        std::lock_guard<std::mutex> lock(_poseMutex);
+        if (!_poseFresh)
+        {
+            return; // no new pose frame since last drain; leave touch_* as-is
+        }
+        hands.swap(_poseHands);
+        _poseFresh = false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    float dt = 1.0f / std::max(1.0f, static_cast<float>(_fps));
+    if (_poseDrainInit)
+    {
+        dt = std::chrono::duration<float>(now - _poseLastDrain).count();
+        dt = std::clamp(dt, 1.0e-3f, 0.25f); // guard first-frame / stall spikes
+    }
+    _poseLastDrain = now;
+    _poseDrainInit = true;
+
+    const TouchCommand cmd = _poseBridge->Update(hands, dt);
+    const int pressure = static_cast<int>(std::lround(cmd.pressure));
+    switch (cmd.op)
+    {
+        case TouchOp::Down: touch(cmd.x, cmd.y, pressure); break;
+        case TouchOp::Drag: touchDrag(cmd.x, cmd.y, pressure); break;
+        case TouchOp::Up: touchDestroy(cmd.x, cmd.y); break;
+        case TouchOp::None: break;
+    }
+
+    // TEMP debug (bridge bring-up): throttled arbitration summary. PROJECTM_POSE_DEBUG_EVERY (0=off).
+    const char* everyEnv = std::getenv("PROJECTM_POSE_DEBUG_EVERY");
+    const int every = (everyEnv && everyEnv[0]) ? std::atoi(everyEnv) : 0; // 0 = off by default
+    static int dbg = 0;
+    if (every > 0 && (dbg++ % every) == 0)
+    {
+        const char* opName = (cmd.op == TouchOp::Down) ? "DOWN"
+                             : (cmd.op == TouchOp::Drag) ? "DRAG"
+                             : (cmd.op == TouchOp::Up)   ? "UP"
+                                                         : "none";
+        std::string trackStr;
+        char buf[96];
+        for (const auto& t : _poseBridge->DebugTracks())
+        {
+            std::snprintf(buf, sizeof(buf), " %s#%d(x%.2f,spd%.2f,sc%.2f%s)",
+                          t.owner ? "*" : "", t.id, t.x, t.speed, t.score, t.active ? ",ON" : "");
+            trackStr += buf;
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[BridgeDebug] %-4s (%.2f,%.2f) |%s",
+                    opName, cmd.x, cmd.y, trackStr.c_str());
+    }
+#endif
+}
+
 void projectMSDL::renderFrame()
 {
     const auto frameStart = std::chrono::steady_clock::now();
+
+    // Apply the latest pose-driven touch (main thread; projectm_touch* is not thread-safe).
+    drainPoseTouch();
 
     if (usesSupersampleTarget() && _ssFbo != 0)
     {

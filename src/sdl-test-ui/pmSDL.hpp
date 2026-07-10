@@ -51,10 +51,13 @@
 #include "videoCapture.hpp"
 #include "depthCapture.hpp"
 #include "segMask.hpp"
+#include "poseTracker.hpp"
+#include "poseTouchBridge.hpp"
 #endif
 
 #include <chrono>
 #include <memory>
+#include <mutex>
 
 
 #if defined _MSC_VER
@@ -140,6 +143,10 @@ public:
     void nextMonitor();
     void toggleFullScreen();
     void resize(unsigned int width, unsigned int height);
+    //! Reads the mouse position and normalizes it to [0,1] with Y bottom-to-top (matching the
+    //! touch_*/seg_* convention). Uses the window's POINT size, not the drawable pixel size, so
+    //! it stays correct on HiDPI/Retina where the two differ by the display scale.
+    void normalizedMouse(float& x, float& y);
     void touch(float x, float y, int pressure, int touchtype = 0);
     void touchDrag(float x, float y, int pressure);
     void touchDestroy(float x, float y);
@@ -200,6 +207,15 @@ public:
     // $PROJECTM_SEG_HARDEN_LO / _HI override these.
     void setVideoSegHardenLo(double lo) { _segHardenLo = lo; }
     void setVideoSegHardenHi(double hi) { _segHardenHi = hi; }
+
+    // ONNX body-pose model path ("Video Pose Model"): when set (with Video Mask=seg), a YOLO-pose
+    // model runs alongside seg and drives the pose->touch bridge. Empty = pose off.
+    // $PROJECTM_POSE_MODEL overrides it.
+    void setVideoPoseModel(const std::string& path) { _poseModelPath = path; }
+
+    // Whether the camera feed is horizontally mirrored ("Video Mirror"). The pose->touch bridge
+    // applies the same flip so touch lands where the performer sees their hand.
+    void setVideoMirror(bool mirror) { _videoMirror = mirror; }
 
     bool done{false};
     bool mouseDown{false};
@@ -284,6 +300,12 @@ private:
     double _segHardenLo{0.0};
     double _segHardenHi{1.0};
 
+    // ONNX body-pose model path ("Video Pose Model"); empty = pose off. $PROJECTM_POSE_MODEL overrides.
+    std::string _poseModelPath;
+
+    // Whether the camera feed is mirrored ("Video Mirror"); the pose->touch bridge matches the flip.
+    bool _videoMirror{false};
+
     std::string _presetName; //!< Current preset name
 
     // Frame-rate tracking: counts rendered frames over a ~1s wall-clock window and logs the
@@ -297,5 +319,19 @@ private:
     std::unique_ptr<VideoCapture> _videoCapture;
     std::unique_ptr<DepthCapture> _depthCapture; //!< Luxonis OAK depth-camera backend (when selected).
     std::unique_ptr<SegMasker> _segMasker;       //!< ONNX person-segmentation backend (when selected).
+    std::unique_ptr<PoseTracker> _poseTracker;   //!< ONNX body-pose backend (when pose→touch is enabled).
+    std::unique_ptr<PoseTouchBridge> _poseBridge; //!< Arbitrates pose hands into one touch stream.
+
+    // Hand observations produced on the capture thread and consumed by drainPoseTouch() on the
+    // main/render thread (projectm_touch* is not thread-safe, so the bridge runs main-thread only).
+    std::mutex _poseMutex;
+    std::vector<HandObservation> _poseHands;
+    bool _poseFresh{false};
+    std::chrono::steady_clock::time_point _poseLastDrain{};
+    bool _poseDrainInit{false};
 #endif
+
+    //! Runs the pose->touch bridge from the latest capture-thread hand observations and applies the
+    //! resulting touch command via projectm_touch*. Called on the main thread from renderFrame().
+    void drainPoseTouch();
 };

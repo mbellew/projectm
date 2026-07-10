@@ -1,0 +1,50 @@
+// Phase-1 touch test. Drag the LEFT mouse button held down.
+//
+// IMPORTANT: cx/cy are the pivot for ROTATION and STRETCH only — NOT the zoom
+// center. Zoom always pulls toward screen-middle (see PresetWarpVertexShader).
+// So this preset demonstrates touch three unambiguous ways:
+//   * rot pivot (cx,cy) follows touch  -> image pinwheels around the cursor
+//   * dx,dy translation follows touch   -> image scrolls toward the cursor
+//   * inner-border flash on touch_on    -> border lights up only while held
+//
+// touch_x is 0..1 left->right, touch_y is 0..1 bottom->top (matches seg_*).
+[preset00]
+fDecay=0.97
+zoom=1.0
+warp=0
+sx=1
+sy=1
+fWaveAlpha=1
+nWaveMode=2
+bWaveThick=1
+ib_size=0.03
+ib_a=0.0
+
+// NOTE: per_frame_N indices must be contiguous — projectM stops loading at the
+// first missing index, silently dropping every line after the gap.
+//
+// Rotation/stretch pivot (cx,cy) tracks the touch point. cx uses touch_x directly;
+// cy needs the (1-touch_y) flip (warp-space Y orientation differs from wave space).
+per_frame_1=cx = if(above(touch_on,0.5), touch_x, 0.5);
+per_frame_2=cy = if(above(touch_on,0.5), 1-touch_y, 0.5);
+
+// Translation scrolls the image toward the cursor while held (this is what
+// actually moves the "zoom-ish" focus — dx/dy, not cx/cy).
+//per_frame_3=dx = touch_on * 0.10 * (touch_x - 0.5);
+//per_frame_4=dy = touch_on * 0.10 * (touch_y - 0.5);
+
+// Border flashes only while the button is held (touch_on gate).
+per_frame_3=ib_a = touch_on;
+per_frame_4=ib_r = 0.5 + 0.5*sin(6*time);
+per_frame_5=ib_g = 0.5 + 0.5*sin(6*time + 2);
+per_frame_6=ib_b = 0.5 + 0.5*sin(6*time + 4);
+
+// Move the base waveform to the touch point. wave_x/wave_y are 0..1 (0.5 = center)
+// and wave_y is bottom-up (see WaveformMath: m_waveY = 2*wave_y - 1, NDC y-up), so
+// touch_y maps directly here — no flip, unlike cx/cy. Idle: park at center.
+per_frame_7=wave_x = if(above(touch_on,0.5), touch_x, 0.5);
+per_frame_8=wave_y = if(above(touch_on,0.5), touch_y, 0.5);
+per_frame_9=wave_a = touch_on;
+per_frame_10=wave_r = 1;
+per_frame_11=wave_g = 1;
+per_frame_12=wave_b = 1;

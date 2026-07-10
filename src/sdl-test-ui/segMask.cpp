@@ -640,6 +640,33 @@ bool SegMasker::IsLoaded() const
     return m_impl->session != nullptr;
 }
 
+bool SegMasker::HasDepth() const
+{
+    return !m_impl->depthMap.empty() && m_impl->depthMapW > 0 && m_impl->depthMapH > 0;
+}
+
+float SegMasker::SampleDepth(float fx, float fy) const
+{
+    const Impl& I = *m_impl;
+    if (I.depthMap.empty() || I.depthMapW <= 0 || I.depthMapH <= 0)
+    {
+        return -1.0f;
+    }
+    // fy is bottom-up; the depth map's row 0 is the top of the frame.
+    const float cx = std::clamp(fx, 0.0f, 1.0f) * static_cast<float>(I.depthMapW - 1);
+    const float ry = std::clamp(1.0f - fy, 0.0f, 1.0f) * static_cast<float>(I.depthMapH - 1);
+    const int x0 = static_cast<int>(std::floor(cx));
+    const int y0 = static_cast<int>(std::floor(ry));
+    const int x1 = std::min(x0 + 1, I.depthMapW - 1);
+    const int y1 = std::min(y0 + 1, I.depthMapH - 1);
+    const float wx = cx - x0;
+    const float wy = ry - y0;
+    const float* d = I.depthMap.data();
+    const float top = d[y0 * I.depthMapW + x0] * (1 - wx) + d[y0 * I.depthMapW + x1] * wx;
+    const float bot = d[y1 * I.depthMapW + x0] * (1 - wx) + d[y1 * I.depthMapW + x1] * wx;
+    return top * (1 - wy) + bot * wy;
+}
+
 void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
                         std::vector<uint8_t>& outRGBA)
 {
@@ -1157,6 +1184,11 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     auto closeness = [&](float v) {
         return I.depthInvert ? (dmax - v) / drange : (v - dmin) / drange;
     };
+
+    // Retain the full-resolution closeness map so callers can sample depth at an arbitrary point
+    // (e.g. a wrist keypoint) via SampleDepth. Stored as closeness in [0,1] (1 = nearest).
+    I.depthMap.resize(static_cast<size_t>(dn));
+    for (int i = 0; i < dn; ++i) { I.depthMap[i] = closeness(depth[i]); }
 
     // 3. Coarse labeling grid (aspect-matched to the frame). Each cell samples the matte alpha
     //    (foreground?) and the depth map at its center.

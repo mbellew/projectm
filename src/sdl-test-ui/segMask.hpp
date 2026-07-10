@@ -76,6 +76,18 @@ public:
 
     bool IsLoaded() const;
 
+    /** True when a depth model is loaded and a depth map from the last frame is available. */
+    bool HasDepth() const;
+
+    /**
+     * Samples the last frame's relative-depth map as normalized closeness at a point.
+     * @param fx,fy Normalized position, [0,1], fx left->right and fy BOTTOM->top (matches the
+     *        seg_ and touch_ variable convention).
+     * @return Closeness in [0,1] (1 = nearest), or -1 if no depth map is available. Bilinear.
+     * Safe to call right after Process() on the same thread (reads the retained depth buffer).
+     */
+    float SampleDepth(float fx, float fy) const;
+
     /**
      * Runs segmentation on a BGRA/BGRX color frame and writes an RGBA frame
      * (RGB = the color image, A = person matte) to @p outRGBA (resized to w*h*4).

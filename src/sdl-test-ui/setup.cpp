@@ -377,6 +377,7 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         app->setVideoSegDepthBand(config.read<double>("Video Seg Depth Band", 0.0));
         app->setVideoSegHardenLo(config.read<double>("Video Seg Harden Lo", 0.0));
         app->setVideoSegHardenHi(config.read<double>("Video Seg Harden Hi", 1.0));
+        app->setVideoPoseModel(expandTilde(config.read<std::string>("Video Pose Model", std::string())));
 
         // Texture search path(s) for image samplers (e.g. sampler_rand00). ';'-separated,
         // "~" expands to $HOME. Without this the library has no search path, so textured
@@ -452,6 +453,7 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
 
     // Optional global horizontal mirror of the camera feed ("Video Mirror" in config.inp).
     projectm_video_set_mirror(app->projectM(), videoMirror);
+    app->setVideoMirror(videoMirror); // the pose->touch bridge matches this flip
 
     // The chroma-key color is a scene/camera property the application owns (not the
     // preset). Override the default black sentinel via $PROJECTM_VIDEO_CHROMA_KEY="r,g,b"

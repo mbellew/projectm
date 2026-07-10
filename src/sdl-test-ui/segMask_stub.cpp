@@ -45,6 +45,16 @@ bool SegMasker::IsLoaded() const
     return false;
 }
 
+bool SegMasker::HasDepth() const
+{
+    return false;
+}
+
+float SegMasker::SampleDepth(float /*fx*/, float /*fy*/) const
+{
+    return -1.0f;
+}
+
 void SegMasker::Process(const uint8_t* /*bgra*/, int /*w*/, int /*h*/, bool /*mirror*/,
                         std::vector<uint8_t>& /*outRGBA*/)
 {

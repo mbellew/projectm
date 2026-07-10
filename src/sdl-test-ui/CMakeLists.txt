@@ -86,8 +86,10 @@ endif()
 
 if(_onnx_found)
     list(APPEND _video_capture_sources segMask.hpp segMask.cpp)
+    list(APPEND _video_capture_sources poseTracker.hpp poseTracker.cpp)
 else()
     list(APPEND _video_capture_sources segMask.hpp segMask_stub.cpp)
+    list(APPEND _video_capture_sources poseTracker.hpp poseTracker_stub.cpp)
 endif()
 
 add_executable(projectM-Test-UI
@@ -99,6 +101,8 @@ add_executable(projectM-Test-UI
         loopback.hpp
         pmSDL.cpp
         pmSDL.hpp
+        poseTouchBridge.cpp
+        poseTouchBridge.hpp
         projectM_SDL_main.cpp
         setup.cpp
         setup.hpp

@@ -46,3 +46,10 @@ Menu Font = VeraMono.ttf
 #   gate               = pass the primary where the secondary is present, reject (zero) elsewhere
 #                        (preserves the primary's edges; $PROJECTM_SEG_GATE sets the cutoff, def 0.5)
 #Video Seg Combine = multiply
+# Optional body-pose tracking (drives the pose->touch bridge that moves the preset touch_*
+# inputs). Requires -DENABLE_ONNX_SEG=ON and Video Mask = seg; runs a YOLO-pose model on the
+# same camera frame as seg. Export a model with ./export_pose_model.sh (needs `pip install
+# ultralytics`), which writes ~/.projectM/models/yolo11n-pose.onnx. $PROJECTM_POSE_MODEL overrides.
+# Leave unset to disable pose. (Current state: tracker-first -- detections are logged; the
+# pose->touch bridge is being built.)
+#Video Pose Model = ~/.projectM/models/yolo11n-pose.onnx
