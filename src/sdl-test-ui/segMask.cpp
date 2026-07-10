@@ -18,10 +18,9 @@
  */
 #include "segMask.hpp"
 
+#include "onnxCommon.hpp"
+
 #include <onnxruntime_cxx_api.h>
-#ifdef __APPLE__
-#include <coreml_provider_factory.h>
-#endif
 #include <SDL2/SDL.h>
 
 #include <algorithm>
@@ -29,12 +28,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
-#include <limits>
-#include <system_error>
-#include <unordered_map>
 
 namespace {
+
+using onnxcommon::EnvFloat;
+using onnxcommon::EnvInt;
 
 // Bilinear downscale of interleaved RGB (3 bytes/pixel) into a planar CHW float
 // buffer, applying out = byte * scale + bias (per-model normalization).
@@ -185,151 +183,13 @@ float SampleMatte(const float* matte, int mw, int mh, float fx, float fy)
 
 float Sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 
-// Letterbox (aspect-preserving resize + gray pad) the RGB frame into a square CHW [0,1] buffer,
-// the way Ultralytics expects. Records the scale and pad so masks map back to the frame.
-void RgbToChwLetterbox(const uint8_t* rgb, int srcW, int srcH, int size, float* out,
-                       float& scaleOut, int& padXOut, int& padYOut)
-{
-    const float scale = std::min(static_cast<float>(size) / srcW, static_cast<float>(size) / srcH);
-    const int newW = std::max(1, static_cast<int>(std::round(srcW * scale)));
-    const int newH = std::max(1, static_cast<int>(std::round(srcH * scale)));
-    const int padX = (size - newW) / 2;
-    const int padY = (size - newH) / 2;
-    const int plane = size * size;
-    const float padVal = 114.0f / 255.0f; // Ultralytics gray padding
-
-    for (int i = 0; i < 3 * plane; ++i) { out[i] = padVal; }
-
-    const float rsx = static_cast<float>(srcW) / newW;
-    const float rsy = static_cast<float>(srcH) / newH;
-    for (int y = 0; y < newH; ++y)
-    {
-        const float fy = (y + 0.5f) * rsy - 0.5f;
-        const int y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, srcH - 1);
-        const int y1 = std::min(y0 + 1, srcH - 1);
-        const float wy = std::clamp(fy - y0, 0.0f, 1.0f);
-        for (int x = 0; x < newW; ++x)
-        {
-            const float fx = (x + 0.5f) * rsx - 0.5f;
-            const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, srcW - 1);
-            const int x1 = std::min(x0 + 1, srcW - 1);
-            const float wx = std::clamp(fx - x0, 0.0f, 1.0f);
-            const uint8_t* p00 = rgb + (static_cast<size_t>(y0) * srcW + x0) * 3;
-            const uint8_t* p01 = rgb + (static_cast<size_t>(y0) * srcW + x1) * 3;
-            const uint8_t* p10 = rgb + (static_cast<size_t>(y1) * srcW + x0) * 3;
-            const uint8_t* p11 = rgb + (static_cast<size_t>(y1) * srcW + x1) * 3;
-            const int dstIdx = (y + padY) * size + (x + padX);
-            for (int c = 0; c < 3; ++c)
-            {
-                const float top = p00[c] * (1 - wx) + p01[c] * wx;
-                const float bot = p10[c] * (1 - wx) + p11[c] * wx;
-                out[c * plane + dstIdx] = (top * (1 - wy) + bot * wy) / 255.0f;
-            }
-        }
-    }
-    scaleOut = scale;
-    padXOut = padX;
-    padYOut = padY;
-}
-
+// Person detection carrying its instance-mask coefficient offset (the box math itself lives in
+// onnxcommon::BoxIoU). RgbToChwLetterbox / MakeSessionOptions are also shared via onnxCommon.
 struct YoloDet
 {
     float cx, cy, w, h, score;
     int coeffOffset; // start index of this det's mask coefficients in the flat coeff store
 };
-
-float BoxIoU(const YoloDet& a, const YoloDet& b)
-{
-    const float ax0 = a.cx - a.w * 0.5f, ay0 = a.cy - a.h * 0.5f;
-    const float ax1 = a.cx + a.w * 0.5f, ay1 = a.cy + a.h * 0.5f;
-    const float bx0 = b.cx - b.w * 0.5f, by0 = b.cy - b.h * 0.5f;
-    const float bx1 = b.cx + b.w * 0.5f, by1 = b.cy + b.h * 0.5f;
-    const float ix = std::max(0.0f, std::min(ax1, bx1) - std::max(ax0, bx0));
-    const float iy = std::max(0.0f, std::min(ay1, by1) - std::max(ay0, by0));
-    const float inter = ix * iy;
-    const float uni = a.w * a.h + b.w * b.h - inter;
-    return uni > 0.0f ? inter / uni : 0.0f;
-}
-
-int EnvInt(const char* name, int fallback)
-{
-    const char* v = std::getenv(name);
-    return (v && v[0]) ? std::atoi(v) : fallback;
-}
-float EnvFloat(const char* name, float fallback)
-{
-    const char* v = std::getenv(name);
-    return (v && v[0]) ? static_cast<float>(std::atof(v)) : fallback;
-}
-
-// Builds SessionOptions with the platform GPU execution provider appended: CoreML (ANE/GPU) on
-// macOS, CUDA on Linux, each honoring the same env switches the seg model uses. On CUDA success,
-// sets useCuda=true and cudaDevice; on any failure it logs and leaves the CPU provider in place.
-// Shared by the seg model (Load) and the depth model (LoadDepth) so both run on the same EP.
-Ort::SessionOptions MakeSessionOptions(const std::string& modelPath, bool& useCuda, int& cudaDevice)
-{
-    Ort::SessionOptions options;
-    options.SetIntraOpNumThreads(2);
-    options.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
-#ifdef __APPLE__
-    // CoreML execution provider (ANE/GPU) is macOS-only.
-    if (EnvInt("PROJECTM_SEG_COREML", 1) != 0)
-    {
-        try
-        {
-            // Cache the compiled CoreML model. The first launch still pays the multi-second
-            // graph compile, but it writes the result to ModelCacheDirectory and every later
-            // launch loads the cached .mlmodelc instead (sub-second). ORT keys the cache on the
-            // model + EP options, so it self-invalidates if either changes. Requires the newer
-            // string-options CoreML API (ORT >= 1.21) and the MLProgram format. The cache lives
-            // next to the model so it travels with the models directory.
-            const std::filesystem::path cacheDir =
-                std::filesystem::path(modelPath).parent_path() / "coreml_cache";
-            std::error_code ec;
-            std::filesystem::create_directories(cacheDir, ec);
-            const std::unordered_map<std::string, std::string> coremlOptions{
-                {"ModelFormat", "MLProgram"},
-                {"MLComputeUnits", "ALL"},
-                {"ModelCacheDirectory", cacheDir.string()},
-            };
-            options.AppendExecutionProvider("CoreML", coremlOptions);
-        }
-        catch (const std::exception& e)
-        {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "[SegMasker] CoreML EP unavailable (%s); using CPU.", e.what());
-        }
-    }
-#else
-    // NVIDIA CUDA execution provider. Supplied at runtime by the GPU ONNX Runtime
-    // build (libonnxruntime_providers_cuda.so) when CUDA + cuDNN are present; on a
-    // CPU-only ORT or any missing library the call throws and we fall back to the
-    // CPU provider. Disable explicitly with PROJECTM_SEG_CUDA=0.
-    if (EnvInt("PROJECTM_SEG_CUDA", 1) != 0)
-    {
-        try
-        {
-            OrtCUDAProviderOptions cudaOptions{};
-            cudaOptions.device_id = EnvInt("PROJECTM_SEG_CUDA_DEVICE", 0);
-            cudaOptions.gpu_mem_limit = std::numeric_limits<size_t>::max();
-            cudaOptions.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
-            cudaOptions.do_copy_in_default_stream = 1;
-            options.AppendExecutionProvider_CUDA(cudaOptions);
-            useCuda = true;
-            cudaDevice = cudaOptions.device_id;
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                        "[SegMasker] Using CUDA execution provider (device %d).",
-                        cudaOptions.device_id);
-        }
-        catch (const std::exception& e)
-        {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "[SegMasker] CUDA EP unavailable (%s); using CPU.", e.what());
-        }
-    }
-#endif
-    return options;
-}
 
 } // namespace
 
@@ -415,8 +275,10 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
 {
     try
     {
+        const onnxcommon::EpConfig ep{"SegMasker", "PROJECTM_SEG_COREML", "PROJECTM_SEG_CUDA",
+                                      "PROJECTM_SEG_CUDA_DEVICE"};
         Ort::SessionOptions options =
-            MakeSessionOptions(modelPath, m_impl->useCuda, m_impl->cudaDevice);
+            onnxcommon::MakeSessionOptions(modelPath, ep, m_impl->useCuda, m_impl->cudaDevice);
 
         m_impl->session = std::make_unique<Ort::Session>(m_impl->env, modelPath.c_str(), options);
 
@@ -589,7 +451,9 @@ bool SegMasker::LoadDepth(const std::string& modelPath, int size, float band, bo
     {
         bool dCuda = false; // depth runs single-shot; it doesn't need IoBinding/recurrent state.
         int dDev = 0;
-        Ort::SessionOptions options = MakeSessionOptions(modelPath, dCuda, dDev);
+        const onnxcommon::EpConfig ep{"SegMasker", "PROJECTM_SEG_COREML", "PROJECTM_SEG_CUDA",
+                                      "PROJECTM_SEG_CUDA_DEVICE"};
+        Ort::SessionOptions options = onnxcommon::MakeSessionOptions(modelPath, ep, dCuda, dDev);
         m_impl->depthSession = std::make_unique<Ort::Session>(m_impl->env, modelPath.c_str(), options);
 
         m_impl->depthInNames.clear();
@@ -739,7 +603,7 @@ void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
         const int size = m_impl->inW; // square model input
         float lbScale = 1.0f;
         int padX = 0, padY = 0;
-        RgbToChwLetterbox(m_impl->rgbBuf.data(), w, h, size, m_impl->inputBuf.data(),
+        onnxcommon::RgbToChwLetterbox(m_impl->rgbBuf.data(), w, h, size, m_impl->inputBuf.data(),
                           lbScale, padX, padY);
 
         Ort::MemoryInfo memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -838,7 +702,12 @@ void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
             keep.push_back(dets[i]);
             for (size_t j = i + 1; j < dets.size(); ++j)
             {
-                if (!removed[j] && BoxIoU(dets[i], dets[j]) > 0.45f) { removed[j] = 1; }
+                if (!removed[j] &&
+                    onnxcommon::BoxIoU(dets[i].cx, dets[i].cy, dets[i].w, dets[i].h,
+                                       dets[j].cx, dets[j].cy, dets[j].w, dets[j].h) > 0.45f)
+                {
+                    removed[j] = 1;
+                }
             }
         }
 

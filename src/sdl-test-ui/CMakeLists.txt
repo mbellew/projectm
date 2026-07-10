@@ -85,6 +85,7 @@ if(ENABLE_ONNX_SEG)
 endif()
 
 if(_onnx_found)
+    list(APPEND _video_capture_sources onnxCommon.hpp onnxCommon.cpp)
     list(APPEND _video_capture_sources segMask.hpp segMask.cpp)
     list(APPEND _video_capture_sources poseTracker.hpp poseTracker.cpp)
 else()
