@@ -1,0 +1,52 @@
+# Example appliance ~/.projectM/config.inp for the **Linux** /opt/projectm system bundle.
+# (The macOS bundle uses config.inp.example, whose paths point at ~/projectm.) The Ansible
+# `config` role normally generates this from group_vars; this file documents the keys for a
+# manual setup. All paths assume `just deploy-linux` populated /opt/projectm.
+
+Mesh X  = 60
+Mesh Y  = 40
+FPS     = 60
+Preset Duration = 30
+Beat Sensitivity = 1.0
+Aspect Correction = true
+
+# Start fullscreen at launch (the appliance wants this true). CLI --fullscreen/--windowed wins.
+Fullscreen = true
+
+# Capture-source preference order, highest first, ';'-separated, case-insensitive substrings.
+# First present device wins; otherwise the system default is used. $PROJECTM_AUDIO_DEVICE /
+# $PROJECTM_VIDEO_DEVICE env vars, if set, take precedence.
+# NOTE: a name that matches nothing does NOT error -- it silently falls back to the system
+# default input, which on a box with no working default means the visuals run deaf (no beat,
+# no reactivity). Check the log for "Selected audio device ..." to confirm a real match.
+Audio Devices = WyreStorm; Camera; Webcam
+Video Devices = Camera
+# Horizontal mirror for a selfie-style view.
+Video Mirror = 1
+
+# Preset + texture sources, shipped into the /opt tree by deploy-linux.sh.
+Preset Path = /opt/projectm/share/projectm/presets/video
+Texture Path = /opt/projectm/textures
+
+# Application-global foreground masking. "seg" = ONNX person segmentation on the webcam color
+# frame. $PROJECTM_VIDEO_MASK overrides.
+Video Mask = seg
+
+# Processing size 1/2/3 -> 256/384/512: higher = crisper matte but slower. A fan-cooled machine
+# with a GPU can run 3. $PROJECTM_SEG_QUALITY overrides.
+Video Seg Quality = 3
+
+# Seg model (absolute path into the /opt tree — the appliance user's home has no models seeded).
+# RVM is the soft-matte default; *u2net*/*yolo* filenames auto-select those families.
+Video Seg Model = /opt/projectm/models/rvm_mobilenetv3.onnx
+
+# Optional monocular depth gate: drop background people (spectators/passers-by) from the matte by
+# relative depth. Empty/omit to disable. Band 0..1 = how far behind the nearest person still counts
+# as "front". $PROJECTM_SEG_DEPTH_MODEL / _BAND override.
+Video Seg Depth Model = /opt/projectm/models/depth_anything_v2_vits.onnx
+Video Seg Depth Band = 0.20
+
+# Optional matte hardening (smoothstep alpha contrast) to cut soft-matte ghosting. Lo=0,Hi=1 = off.
+# $PROJECTM_SEG_HARDEN_LO/_HI override.
+Video Seg Harden Lo = 0.0
+Video Seg Harden Hi = 1.0
