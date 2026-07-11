@@ -757,17 +757,25 @@ void projectMSDL::keyHandler(SDL_Event* sdl_evt)
             }
 
         case SDLK_f:
+            // f (with or without cmd/ctrl): fullscreen, as in every other app.
+            // Favouriting used to live on the UNMODIFIED f, so reaching for fullscreen and missing
+            // the modifier silently wrote a favorite -- which quietly filled favorites.txt with
+            // presets nobody chose. It is now on cmd/ctrl-d ("bookmark"), below.
+            // Stereo requires fullscreen
+#if !STEREOSCOPIC_SBS
+            toggleFullScreen();
+#endif
+            this->stretch = false; // if we are toggling fullscreen, ensure we disable monitor stretching.
+            return;                // handled
+
+        case SDLK_d:
             if (sdl_mod & KMOD_LGUI || sdl_mod & KMOD_RGUI || sdl_mod & KMOD_LCTRL)
             {
-                // command-f: fullscreen
-                // Stereo requires fullscreen
-#if !STEREOSCOPIC_SBS
-                toggleFullScreen();
-#endif
-                this->stretch = false; // if we are toggling fullscreen, ensure we disable monitor stretching.
-                return;                // handled
+                // cmd/ctrl-d: add the current preset to favorites. Deliberately requires a
+                // modifier: this writes to a file, so it should not be a bare keypress.
+                addCurrentPresetToFavorites();
+                return; // handled
             }
-            addCurrentPresetToFavorites();
             break;
 
         case SDLK_r:
