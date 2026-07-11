@@ -105,6 +105,8 @@ add_executable(projectM-Test-UI
         poseTouchBridge.cpp
         poseTouchBridge.hpp
         projectM_SDL_main.cpp
+        screenshot.cpp
+        screenshot.hpp
         setup.cpp
         setup.hpp
         ${_video_capture_sources}
@@ -153,6 +155,13 @@ elseif(ENABLE_VIDEO_CAPTURE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
     find_package(Threads REQUIRED)
     target_link_libraries(projectM-Test-UI PRIVATE Threads::Threads stb_image)
 endif()
+
+# screenshot.cpp compiles the vendored stb_image_write (header-only) itself, so it needs the
+# stb include dir but not the object library -- which is only linked on the video-capture path.
+target_include_directories(projectM-Test-UI
+        PRIVATE
+        $<TARGET_PROPERTY:stb_image,INTERFACE_INCLUDE_DIRECTORIES>
+        )
 
 target_link_libraries(projectM-Test-UI
         PRIVATE

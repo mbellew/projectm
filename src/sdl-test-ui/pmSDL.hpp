@@ -152,6 +152,9 @@ public:
     void touchDestroy(float x, float y);
     void touchDestroyAll();
     void renderFrame();
+    void takeScreenshot();      //!< Capture the current frame to a timestamp-named PNG in the shot dir.
+    void initScreenshots();     //!< Read PROJECTM_SCREENSHOT_* env vars (call once at startup).
+    void serviceScreenshots();  //!< Fire any scheduled captures that are due. Call before the buffer swap.
     void playInitialPreset(); //!< Loads the first playlist preset at startup so the idle preset isn't shown when presets are available.
     void trackFrameRate(std::chrono::steady_clock::time_point frameStart); //!< Accumulates and logs the achieved frame rate once per second.
     void pollEvent();
@@ -314,6 +317,17 @@ private:
     int _fpsFrameCount{0};                                   //!< Frames rendered in the current window.
     double _fpsFrameMsAccum{0.0};                            //!< Accumulated per-frame render time (ms) in the window.
     bool _fpsTrackerInitialized{false};                      //!< False until the first frame seeds the window start.
+
+    // Scheduled screenshots (PROJECTM_SCREENSHOT_AT): capture the frame at fixed times after
+    // startup and optionally exit, so a preset can be reviewed without a human catching the
+    // right moment in the window.
+    std::vector<double> _shotTimes;                          //!< Capture times in seconds since startup, ascending.
+    size_t _shotIndex{0};                                    //!< Next entry in _shotTimes to fire.
+    std::string _shotDir{"."};                               //!< Directory the PNGs are written to.
+    bool _shotExit{false};                                   //!< Quit once the last scheduled shot is taken.
+    std::chrono::steady_clock::time_point _startTime{};      //!< Seeded on the first rendered frame.
+    bool _startTimeSet{false};
+    bool _shotRequested{false};                              //!< F12 pressed; capture on the next frame.
 
 #ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
     std::unique_ptr<VideoCapture> _videoCapture;

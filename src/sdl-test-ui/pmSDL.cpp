@@ -30,11 +30,14 @@
 
 #include "pmSDL.hpp"
 
+#include "screenshot.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -687,6 +690,12 @@ void projectMSDL::keyHandler(SDL_Event* sdl_evt)
             projectm_set_aspect_correction(_projectM, !projectm_get_aspect_correction(_projectM));
             break;
 
+        case SDLK_F12:
+            // Deferred to the next render pass: the frame on screen has already been
+            // swapped away, and the capture must read the back buffer before a swap.
+            _shotRequested = true;
+            break;
+
         case SDLK_q:
             if (sdl_mod & KMOD_LGUI || sdl_mod & KMOD_RGUI || sdl_mod & KMOD_LCTRL)
             {
@@ -1167,9 +1176,116 @@ void projectMSDL::renderFrame()
         projectm_opengl_render_frame(_projectM);
     }
 
+    // Screenshots read the BACK buffer, so they must happen before the swap.
+    serviceScreenshots();
+
     SDL_GL_SwapWindow(_sdlWindow);
 
     trackFrameRate(frameStart);
+}
+
+void projectMSDL::initScreenshots()
+{
+    if (const char* dir = getenv("PROJECTM_SCREENSHOT_DIR"))
+    {
+        _shotDir = dir;
+    }
+
+    // PROJECTM_SCREENSHOT_AT="5,8,11" -> capture at those many seconds after startup.
+    if (const char* at = getenv("PROJECTM_SCREENSHOT_AT"))
+    {
+        std::stringstream ss(at);
+        std::string item;
+        while (std::getline(ss, item, ','))
+        {
+            try
+            {
+                _shotTimes.push_back(std::stod(item));
+            }
+            catch (const std::exception&)
+            {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "[screenshot] Ignoring bad PROJECTM_SCREENSHOT_AT entry: %s", item.c_str());
+            }
+        }
+        std::sort(_shotTimes.begin(), _shotTimes.end());
+    }
+
+    // Only meaningful alongside a schedule: quit after the last one is written.
+    if (const char* ex = getenv("PROJECTM_SCREENSHOT_EXIT"))
+    {
+        _shotExit = (std::string(ex) != "0");
+    }
+}
+
+void projectMSDL::takeScreenshot()
+{
+    // Name by preset + wall-clock second so successive shots don't overwrite each other.
+    std::string preset = getActivePresetName();
+    const size_t slash = preset.find_last_of('/');
+    if (slash != std::string::npos)
+    {
+        preset = preset.substr(slash + 1);
+    }
+    const size_t dot = preset.find_last_of('.');
+    if (dot != std::string::npos)
+    {
+        preset = preset.substr(0, dot);
+    }
+    // Keep the filename shell-friendly.
+    for (auto& c : preset)
+    {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_')
+        {
+            c = '_';
+        }
+    }
+
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+
+    const std::string path = _shotDir + "/" + (preset.empty() ? "projectM" : preset) + "-" +
+                             std::to_string(ms) + ".png";
+
+    saveScreenshotPng(path, static_cast<int>(_width), static_cast<int>(_height));
+}
+
+void projectMSDL::serviceScreenshots()
+{
+    if (_shotRequested)
+    {
+        _shotRequested = false;
+        takeScreenshot();
+    }
+
+    if (_shotIndex >= _shotTimes.size())
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (!_startTimeSet)
+    {
+        _startTime = now;
+        _startTimeSet = true;
+    }
+
+    const double elapsed = std::chrono::duration<double>(now - _startTime).count();
+
+    // Fire every shot that has come due (and skip any we slept past), so a stalled frame
+    // can't silently drop a capture.
+    while (_shotIndex < _shotTimes.size() && elapsed >= _shotTimes[_shotIndex])
+    {
+        takeScreenshot();
+        _shotIndex++;
+    }
+
+    if (_shotIndex >= _shotTimes.size() && _shotExit)
+    {
+        SDL_Event quit;
+        quit.type = SDL_QUIT;
+        SDL_PushEvent(&quit);
+    }
 }
 
 void projectMSDL::trackFrameRate(std::chrono::steady_clock::time_point frameStart)

@@ -471,6 +471,9 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
 
     app->init(win);
 
+    // PROJECTM_SCREENSHOT_AT / _DIR / _EXIT: self-photographing runs for preset review.
+    app->initScreenshots();
+
     // Load the first preset immediately so we render a real preset from frame one rather than
     // sitting on the built-in idle preset until the first timed switch (or forever, if locked).
     app->playInitialPreset();
