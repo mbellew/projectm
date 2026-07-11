@@ -22,6 +22,7 @@
 #   MODELS_DIR         *.onnx seg/depth models    (default: $HOME/.projectM/models)
 #   TEXTURES_DIR       image-sampler textures     (default: $HOME/.projectM/textures)
 #   PRESETS_DIR        .milk presets to ship      (default: <repo>/presets/video)
+#   TRANSITIONS_DIR    transition shaders         (default: <repo>/transitions)
 #   INCLUDE_MODELS     0 to skip copying models   (default: 1)
 #
 set -euo pipefail
@@ -41,6 +42,7 @@ CUDA_RUNTIME_DIR="${CUDA_RUNTIME_DIR:-${HOME}/.local/cuda-runtime/lib}"
 MODELS_DIR="${MODELS_DIR:-${HOME}/.projectM/models}"
 TEXTURES_DIR="${TEXTURES_DIR:-${HOME}/.projectM/textures}"
 PRESETS_DIR="${PRESETS_DIR:-${REPO_ROOT}/presets/video}"
+TRANSITIONS_DIR="${TRANSITIONS_DIR:-${REPO_ROOT}/transitions}"
 INCLUDE_MODELS="${INCLUDE_MODELS:-1}"
 
 BIN_SRC="${BUILD_DIR}/src/sdl-test-ui/projectM-Test-UI"
@@ -55,6 +57,7 @@ note "cuda     : ${CUDA_RUNTIME_DIR}"
 note "models   : ${MODELS_DIR} (include=${INCLUDE_MODELS})"
 note "textures : ${TEXTURES_DIR}"
 note "presets  : ${PRESETS_DIR}"
+note "transitions: ${TRANSITIONS_DIR}"
 
 # Fail early with a friendly message if the target needs root.
 parent="$(dirname "${OUT_DIR}")"
@@ -63,7 +66,8 @@ if [[ ! -e "${OUT_DIR}" && ! -w "${parent}" ]] || [[ -e "${OUT_DIR}" && ! -w "${
 fi
 
 mkdir -p "${OUT_DIR}/bin" "${OUT_DIR}/lib" \
-         "${OUT_DIR}/share/projectm/presets/video" "${OUT_DIR}/models" "${OUT_DIR}/textures"
+         "${OUT_DIR}/share/projectm/presets/video" "${OUT_DIR}/share/projectm/transitions" \
+         "${OUT_DIR}/models" "${OUT_DIR}/textures"
 
 # 1. Binary.
 note "copying binary..."
@@ -91,6 +95,16 @@ if [[ -d "${PRESETS_DIR}" ]]; then
   cp -a "${PRESETS_DIR}/." "${OUT_DIR}/share/projectm/presets/video/"
 else
   note "warning: presets dir ${PRESETS_DIR} not found; shipping empty preset dir."
+fi
+
+# 3b. Transition shaders (config.inp's "Transition Path" points here). Without these the engine
+#     silently falls back to the six transitions compiled into the library -- so the deployment would
+#     still run, just without any of the custom transitions, and nothing would say so.
+note "copying transitions..."
+if [[ -d "${TRANSITIONS_DIR}" ]] && compgen -G "${TRANSITIONS_DIR}/*.frag" >/dev/null; then
+  cp -a "${TRANSITIONS_DIR}/." "${OUT_DIR}/share/projectm/transitions/"
+else
+  note "warning: no *.frag in ${TRANSITIONS_DIR}; the built-in transitions will be used."
 fi
 
 # 4. Models (RVM + optional depth/u2net/yolo). Referenced from config.inp by absolute path.

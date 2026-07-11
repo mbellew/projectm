@@ -24,9 +24,12 @@ Video Devices = Camera
 # Horizontal mirror for a selfie-style view.
 Video Mirror = 1
 
-# Preset + texture sources, shipped into the /opt tree by deploy-linux.sh.
+# Preset, texture and transition sources, shipped into the /opt tree by deploy-linux.sh.
+# Transition Path: without it the engine silently falls back to the six transitions compiled into the
+# library -- it still runs, it just never plays any of the custom ones, and nothing says so.
 Preset Path = /opt/projectm/share/projectm/presets/video
 Texture Path = /opt/projectm/textures
+Transition Path = /opt/projectm/share/projectm/transitions
 
 # Application-global foreground masking. "seg" = ONNX person segmentation on the webcam color
 # frame. $PROJECTM_VIDEO_MASK overrides.
