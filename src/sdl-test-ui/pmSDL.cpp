@@ -374,8 +374,10 @@ void projectMSDL::startVideoCapture()
 
                         // Prefer a pose-derived chest/heart point when a confident torso is present:
                         // the matte centroid sits at the belly-button, whereas the shoulder midpoint
-                        // dropped ~25% toward the hips is roughly the sternum. Un-mirrored, like the
+                        // dropped a little toward the hips is roughly the heart. Un-mirrored, like the
                         // matte centroid (the library mirrors internally). Best (first) person only.
+                        // The drop is deliberately shallow (0.15, not sternum-deep) -- the heart sits
+                        // much closer to the shoulder line than to the shoulder/hip midpoint.
                         if (!poses.empty())
                         {
                             const PersonPose& p = poses.front();
@@ -389,12 +391,12 @@ void projectMSDL::startVideoCapture()
                                 const Keypoint& rh = p[Kpt::RightHip];
                                 if (lh.conf > 0.3f && rh.conf > 0.3f)
                                 {
-                                    chestX += 0.25f * ((lh.x + rh.x) * 0.5f - chestX);
-                                    chestY += 0.25f * ((lh.y + rh.y) * 0.5f - chestY);
+                                    chestX += 0.15f * ((lh.x + rh.x) * 0.5f - chestX);
+                                    chestY += 0.15f * ((lh.y + rh.y) * 0.5f - chestY);
                                 }
                                 else
                                 {
-                                    chestY -= 0.06f; // no hips: nudge just below the shoulder line
+                                    chestY -= 0.04f; // no hips: nudge just below the shoulder line
                                 }
                                 cx = std::clamp(chestX, 0.0f, 1.0f);
                                 cy = std::clamp(chestY, 0.0f, 1.0f);
