@@ -302,6 +302,15 @@ public:
     auto VideoInputTexture() const -> unsigned int;
 
     /**
+     * @brief Returns the GL texture id of the active preset's PRE-COMPOSITE image.
+     *
+     * This is the surface the composite shader reads, and the same image fed back as
+     * "sampler_main" next frame -- i.e. what the warp shader actually drew, before the composite
+     * stage crops/curves/shades/frames it. 0 if there is no active preset.
+     */
+    auto MainTexture() const -> unsigned int;
+
+    /**
      * @brief Submits a frame the application has rendered into VideoInputTexture() on the GPU.
      * The frame is copied to the history buffer verbatim (alpha = app-supplied mask); preset
      * alpha modes and mask cleanup are bypassed. GL thread only.

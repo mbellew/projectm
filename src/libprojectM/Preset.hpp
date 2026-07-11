@@ -38,6 +38,19 @@ public:
     virtual auto OutputTexture() const -> std::shared_ptr<Renderer::Texture> = 0;
 
     /**
+     * @brief Returns the preset's PRE-COMPOSITE image: the surface the composite shader reads,
+     * and the same image that is fed back in as "sampler_main" on the next frame.
+     *
+     * This is what the warp shader actually draws, before the composite stage rearranges it (a
+     * composite shader can crop, curve, shade or frame the image -- so the final output can look
+     * nothing like the drawing itself). Useful for inspecting warp/pattern work in isolation.
+     *
+     * Defaults to the composited output for preset types that have no separate surface.
+     * @return A pointer to the preset's pre-composite ("main") texture.
+     */
+    virtual auto MainTexture() const -> std::shared_ptr<Renderer::Texture> { return OutputTexture(); }
+
+    /**
      * @brief Draws an initial image into the preset, e.g. the last frame of a previous preset.
      * It's not guaranteed a preset supports using a previously rendered image. If not
      * supported, this call is simply a no-op.

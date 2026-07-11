@@ -659,6 +659,16 @@ auto ProjectM::VideoInputTexture() const -> unsigned int
     return m_videoTexture ? m_videoTexture->InputTextureId() : 0;
 }
 
+auto ProjectM::MainTexture() const -> unsigned int
+{
+    if (!m_activePreset)
+    {
+        return 0;
+    }
+    const auto texture = m_activePreset->MainTexture();
+    return texture ? texture->TextureID() : 0;
+}
+
 void ProjectM::VideoSubmitFrameGPU()
 {
     if (m_videoTexture)

@@ -14,7 +14,11 @@ cuda_runtime_dir := env_var('HOME') / ".local/cuda-runtime/lib"
 # of CPU time. Set INLINE on the command (not via `export`) on purpose: snap-packaged `just` strips
 # an exported LD_LIBRARY_PATH for security, but an inline assignment applied by the recipe shell at
 # exec time survives. Empty on macOS (CoreML EP; finds its libs via rpath).
-run_env := if os() == "linux" { "LD_LIBRARY_PATH=" + cuda_runtime_dir + ":" + onnx_lib_dir } else { "" }
+#
+# SDL_AUDIODRIVER=alsa: this box's PulseAudio/PipeWire session exposes NO capture sources at all
+# (only a Dummy Output sink), so SDL's default pulse backend finds zero microphones and the app
+# runs deaf — no beat, no reactivity, and no error to say so. ALSA sees the cameras' mics fine.
+run_env := if os() == "linux" { "SDL_AUDIODRIVER=alsa LD_LIBRARY_PATH=" + cuda_runtime_dir + ":" + onnx_lib_dir } else { "" }
 
 # Audio/video source preferences (and other settings) live in ~/.projectM/config.inp,
 # a local, untracked file: Audio Devices / Video Devices / Fullscreen, etc.

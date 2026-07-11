@@ -254,6 +254,12 @@ void projectm_opengl_render_frame_fbo(projectm_handle instance, uint32_t framebu
     projectMInstance->RenderFrame(framebuffer_object_id);
 }
 
+uint32_t projectm_opengl_get_main_texture(projectm_handle instance)
+{
+    auto projectMInstance = handle_to_instance(instance);
+    return projectMInstance->MainTexture();
+}
+
 void projectm_opengl_burn_texture(projectm_handle instance, uint32_t texture, int left, int top, int width, int height)
 {
     auto projectMInstance = handle_to_instance(instance);

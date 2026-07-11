@@ -233,6 +233,14 @@ auto MilkdropPreset::OutputTexture() const -> std::shared_ptr<Renderer::Texture>
     return m_framebuffer.GetColorAttachmentTexture(m_currentFrameBuffer, 0);
 }
 
+auto MilkdropPreset::MainTexture() const -> std::shared_ptr<Renderer::Texture>
+{
+    // The composite is drawn into the OTHER buffer, so after the end-of-frame swap the warp's own
+    // image -- everything the pattern stage drew, and exactly what comes back as "sampler_main"
+    // next frame -- is the one the composite did not touch.
+    return m_framebuffer.GetColorAttachmentTexture(m_previousFrameBuffer, 0);
+}
+
 auto MilkdropPreset::IsComplete() const -> bool
 {
     return m_presetComplete;

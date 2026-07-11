@@ -63,6 +63,22 @@ PROJECTM_EXPORT void projectm_opengl_render_frame_fbo(projectm_handle instance, 
  */
 PROJECTM_EXPORT void projectm_opengl_burn_texture(projectm_handle instance, uint32_t texture, int left, int top, int width, int height);
 
+/**
+ * @brief Returns the active preset's PRE-COMPOSITE image as a GL texture id.
+ *
+ * This is what the preset's warp/pattern stage drew, before the composite shader runs -- and the
+ * same image that is fed back as "sampler_main" on the next frame. A composite shader can crop,
+ * curve, shade or frame the image, so the visible output may look nothing like the drawing itself;
+ * this gives access to the drawing. Intended for tooling (screenshots, debugging), not playback.
+ *
+ * The texture belongs to the preset and is replaced when the preset changes: use it immediately,
+ * do not store it across frames.
+ *
+ * @param instance The projectM instance handle.
+ * @return The GL texture id, or 0 if no preset is active.
+ */
+PROJECTM_EXPORT uint32_t projectm_opengl_get_main_texture(projectm_handle instance);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
