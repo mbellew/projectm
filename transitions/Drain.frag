@@ -17,9 +17,7 @@
 // leaves the old frame there is no old image left to draw, so the new preset shows through.
 //
 // QUICK. Progress is cubed: it hangs almost still, then goes all at once.
-//
-// NOTE: raw sampler names, not the iNoiseLQ / iBass convenience macros -- those are defined WITH a
-// trailing semicolon in the transition header and break inside any expression.
+
 
 const float WEDGES = 30.0;   // angular cells: how many spokes the tear breaks into
 

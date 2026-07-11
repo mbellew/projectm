@@ -13,10 +13,7 @@
 //
 // The blend band is deliberately NARROW: a wide one is just a cross-fade with lumpy timing. The
 // point is a visible, travelling edge.
-//
-// NOTE: use the raw sampler names, not the iNoiseVolHQ / iBass convenience macros in the transition
-// header — those are defined WITH a trailing semicolon, so they only work as a whole statement and
-// break inside any expression.
+
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord)
 {
