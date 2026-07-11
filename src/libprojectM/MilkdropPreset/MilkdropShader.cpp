@@ -908,8 +908,12 @@ void MilkdropShader::TranspileVideoShader(std::string& program)
         "uniform sampler2D sampler_video_in;\n"
         "uniform sampler2D sampler_fc_mask;\n"
         "uniform sampler3D sampler_fw_video;\n"
-        "uniform sampler3D sampler_fc_palette;\n"
-        "uniform sampler3D sampler_fc_palette_lab;\n");
+        // The palette LUTs are 2D (as they are everywhere else) and the header's PaletteSnap/
+        // PalettePull call tex2D on them. Declaring them 3D here made every video_ shader fail to
+        // parse ("tex2D: no overloaded function matched") and silently fall back to the fixed
+        // video_alpha_mode path -- i.e. no preset's video_ shader ever ran.
+        "uniform sampler2D sampler_fc_palette;\n"
+        "uniform sampler2D sampler_fc_palette_lab;\n");
 
     M4::Log_ClearError();
     if (!parser.Parse("", sourcePreprocessed.c_str(), sourcePreprocessed.size()))
