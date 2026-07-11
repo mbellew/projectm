@@ -695,6 +695,15 @@ void projectMSDL::keyHandler(SDL_Event* sdl_evt)
         case SDLK_F12:
             // Deferred to the next render pass: the frame on screen has already been
             // swapped away, and the capture must read the back buffer before a swap.
+            // Shift+F12 grabs the OTHER surface, so the two are easy to compare.
+            if (sdl_mod & KMOD_SHIFT)
+            {
+                std::swap(_shotComposite, _shotMain);
+                if (!_shotComposite && !_shotMain)
+                {
+                    _shotComposite = true;
+                }
+            }
             _shotRequested = true;
             break;
 
@@ -1218,6 +1227,25 @@ void projectMSDL::initScreenshots()
     {
         _shotExit = (std::string(ex) != "0");
     }
+
+    // PROJECTM_SCREENSHOT_SURFACE = comp (default) | main | both
+    //   comp: the window -- what the viewer actually sees, composite shader and all.
+    //   main: the preset's PRE-composite drawing (what the warp stage produced; also next frame's
+    //         sampler_main). Use this when reasoning about the warp shader: a composite that crops,
+    //         curves or shades the image will otherwise confuse what you are trying to learn.
+    if (const char* surface = getenv("PROJECTM_SCREENSHOT_SURFACE"))
+    {
+        const std::string value(surface);
+        _shotComposite = (value == "comp" || value == "both");
+        _shotMain = (value == "main" || value == "both");
+        if (!_shotComposite && !_shotMain)
+        {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "[screenshot] Unknown PROJECTM_SCREENSHOT_SURFACE '%s' (want comp|main|both); using comp",
+                        surface);
+            _shotComposite = true;
+        }
+    }
 }
 
 void projectMSDL::takeScreenshot()
@@ -1246,10 +1274,22 @@ void projectMSDL::takeScreenshot()
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
 
-    const std::string path = _shotDir + "/" + (preset.empty() ? "projectM" : preset) + "-" +
-                             std::to_string(ms) + ".png";
+    const std::string stem = _shotDir + "/" + (preset.empty() ? "projectM" : preset) + "-" +
+                             std::to_string(ms);
 
-    saveScreenshotPng(path, static_cast<int>(_width), static_cast<int>(_height));
+    // Suffix only when both are written, so the common (composite-only) case keeps clean names.
+    const bool both = _shotComposite && _shotMain;
+
+    if (_shotComposite)
+    {
+        saveScreenshotPng(stem + (both ? "-comp.png" : ".png"),
+                          static_cast<int>(_width), static_cast<int>(_height));
+    }
+    if (_shotMain)
+    {
+        saveTexturePng(stem + (both ? "-main.png" : ".png"),
+                       projectm_opengl_get_main_texture(_projectM));
+    }
 }
 
 void projectMSDL::serviceScreenshots()

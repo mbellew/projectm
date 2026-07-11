@@ -329,6 +329,13 @@ private:
     bool _startTimeSet{false};
     bool _shotRequested{false};                              //!< F12 pressed; capture on the next frame.
 
+    // Which surface(s) a capture writes. The composite is what the viewer sees; the "main" texture
+    // is the preset's pre-composite drawing (what the warp shader produced, and what feeds back as
+    // sampler_main). They can differ wildly -- a composite shader may crop, curve, shade or frame
+    // the drawing -- so which one you want depends on the question you are asking.
+    bool _shotComposite{true};  //!< Capture the window (what the viewer sees).
+    bool _shotMain{false};      //!< Also capture the preset's pre-composite "main" texture.
+
 #ifdef PROJECTM_VIDEO_CAPTURE_ENABLED
     std::unique_ptr<VideoCapture> _videoCapture;
     std::unique_ptr<DepthCapture> _depthCapture; //!< Luxonis OAK depth-camera backend (when selected).
