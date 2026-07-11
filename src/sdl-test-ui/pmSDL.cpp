@@ -796,12 +796,16 @@ void projectMSDL::keyHandler(SDL_Event* sdl_evt)
             projectm_playlist_set_shuffle(_playlist, _shuffle);
             break;
 
+        // Left/Right switch preset. Plain = a HARD cut (instant), Shift = a SOFT cut, i.e. it plays
+        // the transition. Without this there is no way to see a transition on demand: every manual
+        // switch was a hard cut, so transitions only ever appeared when a preset timed out by itself
+        // -- which makes writing or reviewing one needlessly painful.
         case SDLK_LEFT:
-            projectm_playlist_play_previous(_playlist, true);
+            projectm_playlist_play_previous(_playlist, !(sdl_mod & KMOD_SHIFT));
             break;
 
         case SDLK_RIGHT:
-            projectm_playlist_play_next(_playlist, true);
+            projectm_playlist_play_next(_playlist, !(sdl_mod & KMOD_SHIFT));
             break;
 
         case SDLK_UP:
