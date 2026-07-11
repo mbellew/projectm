@@ -99,6 +99,17 @@ public:
      */
     auto Texture() -> std::shared_ptr<Texture>;
 
+    /**
+     * @brief Returns the framebuffer the copy is drawn into.
+     *
+     * Exposed so a caller can run an additional pass over the copied image in place -- e.g. the
+     * warp_pre scratch pass, which overwrites only the alpha channel of the "main" texture the
+     * warp shader is about to sample.
+     *
+     * @return The framebuffer holding the copied texture.
+     */
+    auto GetFramebuffer() -> Framebuffer& { return m_framebuffer; }
+
 private:
     /**
      * Updates the mesh

@@ -233,6 +233,17 @@ void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
         alphaShader->SetUniformFloat("video_z_write", (static_cast<float>(prevIndex) + 0.5f) / static_cast<float>(m_depth));
         alphaShader->SetUniformFloat("video_z_range", NormalizedRange());
 
+        // texsize (_c7) for THIS pass = the video texture's own size, not the viewport's: the
+        // pass renders at video resolution, so texsize.zw is one video texel. Without it a
+        // video_ shader cannot offset by a texel and so cannot run any kernel (blur, edges).
+        // Presets use this to PRE-COMPUTE per-pixel work here -- at video res, once -- and
+        // stash the scalar result in the history alpha, instead of recomputing it per render
+        // pixel in the warp shader.
+        alphaShader->SetUniformFloat4("_c7", {static_cast<float>(m_texWidth),
+                                              static_cast<float>(m_texHeight),
+                                              1.0f / static_cast<float>(m_texWidth),
+                                              1.0f / static_cast<float>(m_texHeight)});
+
         // The live frame comes from prev[writeIdx]: the preprocess pass already mirrored it and
         // carried the alpha-mode result in its alpha (the video_ shader's default ret_a), so
         // GetVideoIn stays aligned with the mirrored mask buffer.

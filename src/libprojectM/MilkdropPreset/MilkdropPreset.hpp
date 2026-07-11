@@ -105,6 +105,16 @@ private:
      */
     void LoadShaderCode();
 
+    /**
+     * @brief Runs the optional warp_pre_ scratch pass.
+     *
+     * A fullscreen pass over the "main" texture, run after the y-flip and before the warp mesh
+     * draw. Only the alpha channel is written (rgb is masked off), so the fed-back image survives
+     * and the preset gets a per-pixel scratch channel it can read at any coordinate later.
+     * No-op when the preset declares no warp_pre_ shader.
+     */
+    void RenderWarpPre();
+
     auto ParseFilename(const std::string& filename) -> std::string;
 
     std::string m_absoluteFilePath; //!< The absolute file path of the MilkdropPreset
@@ -133,6 +143,9 @@ private:
     FinalComposite m_finalComposite; //!< Final composite shader or filters.
 
     std::unique_ptr<MilkdropShader> m_videoShader; //!< Optional preset video_ shader: computes the alpha/rgb written into the video history. Null when the preset has none (use the fixed video_alpha_mode path).
+    std::unique_ptr<MilkdropShader> m_warpPreShader; //!< Optional preset warp_pre_ shader: a fullscreen pass run before the warp whose ret.a is written into the main texture's alpha. Null when the preset has none.
+    GLuint m_warpPreVao{0};                          //!< Fullscreen triangle for the warp_pre pass. Created lazily (only presets using warp_pre pay for it).
+    GLuint m_warpPreVbo{0};
 
     bool m_isFirstFrame{true}; //!< Controls drawing the motion vectors starting with the second frame.
 };

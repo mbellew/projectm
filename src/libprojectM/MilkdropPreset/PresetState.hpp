@@ -169,6 +169,7 @@ public:
     std::string warpShader;      //!< Warp shader code.
     std::string compositeShader; //!< Composite shader code.
     std::string videoShader;     //!< Video preprocess "combine" shader code (computes the alpha/rgb written into the video history). Empty = use the fixed video_alpha_mode path.
+    std::string warpPreShader;   //!< Optional pre-warp scratch pass (warp_pre_). Its ret.a is written to the main texture's alpha before the warp runs, so the warp/comp can read a value computed once per pixel instead of recomputing a kernel per sample. Empty = no pass.
 
     std::weak_ptr<Renderer::Shader> untexturedShader; //!< Shader used to draw untextured primitives, e.g. waveforms.
     /*FLOATBUF*/ std::weak_ptr<Renderer::Shader> untexturedDualSourceShader; //!< Dual-source variant that writes per-pixel state (av) into the pattern alpha; null if unsupported.

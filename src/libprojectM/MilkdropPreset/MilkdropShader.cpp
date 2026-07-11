@@ -416,6 +416,10 @@ void MilkdropShader::PreprocessPresetShader(std::string& program)
     {
         shaderTypeString = "video";
     }
+    else if (m_type == ShaderType::WarpPreShader)
+    {
+        shaderTypeString = "warp_pre";
+    }
 
     if (program.length() <= 0)
     {
@@ -468,10 +472,10 @@ void PS(float4 _vDiffuse : COLOR,
         out float4 _mv_tex_coords : COLOR1)
 )");
         }
-        else if (m_type == ShaderType::VideoShader)
+        else if (m_type == ShaderType::VideoShader || m_type == ShaderType::WarpPreShader)
         {
             // Fullscreen pass: only the texture coordinate is interpolated (no per-pixel mesh,
-            // so no rad/ang, no hue diffuse). Single output -> the processed video frame.
+            // so no rad/ang, no hue diffuse). Single output.
             program.replace(int(found), 11, R"(
 void PS(float2 _uv : TEXCOORD0,
         out float4 _return_value : COLOR)
@@ -514,6 +518,14 @@ void PS(float4 _vDiffuse : COLOR,
             progMain = "{\nfloat3 ret = GetVideoIn(uv);\n";
             progMain.append("float ret_a = tex2D(sampler_video_in, uv).a;\n");
         }
+        else if (m_type == ShaderType::WarpPreShader)
+        {
+            // Scratch pass: ret is a float4 here (not float3 + ret_a), because this pass produces
+            // data, not a colour. Only .a is consumed today -- it is written to the main texture's
+            // alpha -- but the full vector is returned so rgb channels can be used later without
+            // changing the shader contract.
+            progMain = "{\nfloat4 ret = float4(0.0, 0.0, 0.0, 0.0);\n";
+        }
         else
         {
             /*FLOATBUF*/ // Comp output is display-only (not fed back): default opaque, override via ret_a.
@@ -531,8 +543,16 @@ void PS(float4 _vDiffuse : COLOR,
     found = program.rfind('}');
     if (found != std::string::npos)
     {
-        program.replace(int(found), 1, "_return_value = float4(ret.xyz, ret_a);\n" /*FLOATBUF*/
-                                       "}\n");
+        if (m_type == ShaderType::WarpPreShader)
+        {
+            program.replace(int(found), 1, "_return_value = ret;\n"
+                                           "}\n");
+        }
+        else
+        {
+            program.replace(int(found), 1, "_return_value = float4(ret.xyz, ret_a);\n" /*FLOATBUF*/
+                                           "}\n");
+        }
     }
     else
     {
@@ -601,7 +621,7 @@ void PS(float4 _vDiffuse : COLOR,
                           "#define uv _uv.xy\n"
                           "#define uv_orig _uv.zw\n");
     }
-    else if (m_type == ShaderType::VideoShader)
+    else if (m_type == ShaderType::VideoShader || m_type == ShaderType::WarpPreShader)
     {
         // No per-pixel mesh: only uv is meaningful (rad/ang/hue come from the warp/comp mesh).
         fullSource.append("#define uv _uv\n"
@@ -833,6 +853,13 @@ void MilkdropShader::TranspileHLSLShader(const PresetState& presetState, std::st
     if (m_type == ShaderType::WarpShader)
     {
         m_shader.CompileProgram(MilkdropStaticShaders::Get()->GetPresetWarpVertexShader(), generator.GetResult());
+    }
+    else if (m_type == ShaderType::WarpPreShader)
+    {
+        // Fullscreen pass (no per-pixel mesh), so it reuses the video pass's vertex shader --
+        // but it goes through the STANDARD transpile above, so it gets the preset's full sampler
+        // set (sampler_main, video, mask, noise, user textures), unlike the video pass.
+        m_shader.CompileProgram(MilkdropStaticShaders::Get()->GetPresetVideoVertexShader(), generator.GetResult());
     }
     else
     {

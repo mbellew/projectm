@@ -1,0 +1,23 @@
+// TEST: can a preset shader declare a helper function before shader_body?
+// Expect: video luminance, posterized to 4 bands, via a user-defined function.
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+
+fWaveEnable=0
+fDecay=1
+zoom=1
+
+comp_1=```
+float3 posterize(float3 c, float bands)
+{
+    return floor(c * bands + 0.5) / bands;
+}
+
+shader_body
+{
+    ret = posterize(GetVideo(uv, 0.0).rgb, 4.0);
+}
+```

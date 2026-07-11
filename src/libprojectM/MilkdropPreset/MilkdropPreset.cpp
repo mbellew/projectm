@@ -99,6 +99,20 @@ void MilkdropPreset::Initialize(const Renderer::RenderContext& renderContext)
         }
     }
 
+    if (m_warpPreShader)
+    {
+        try
+        {
+            m_warpPreShader->LoadTexturesAndCompile(m_state);
+            LOG_DEBUG("[MilkdropPreset] Successfully compiled warp_pre shader code.");
+        }
+        catch (const Renderer::ShaderException& ex)
+        {
+            LOG_WARN("[MilkdropPreset] Error compiling warp_pre shader code: " + ex.message() + " - Skipping the pre-warp pass.");
+            m_warpPreShader.reset();
+        }
+    }
+
     /*FLOATBUF*/
     // Initialize the per-pixel state stored in the pattern buffer's alpha channel. Unless the
     // preset opts into carryover (inherit whatever state is already there), clear only the A
@@ -140,6 +154,13 @@ void MilkdropPreset::RenderFrame(const libprojectM::Audio::FrameAudioData& audio
     // y-flip the previous frame and assign the flipped texture as "main"
     m_flipTexture.Draw(*renderContext.shaderCache, m_framebuffer.GetColorAttachmentTexture(m_previousFrameBuffer, 0), nullptr, true, false);
     m_state.mainTexture = m_flipTexture.Texture();
+
+    // Optional pre-warp scratch pass (warp_pre_). Runs here -- after "main" exists, and before the
+    // warp samples it -- writing ONLY the alpha channel of that texture (rgb is masked off, so the
+    // image being fed back is untouched). This lets a preset compute an expensive per-pixel value
+    // ONCE and then read it at any coordinate from the warp/comp shaders, instead of re-running the
+    // kernel for every sample.
+    RenderWarpPre();
 
     // We now draw to the current framebuffer.
     m_framebuffer.Bind(m_currentFrameBuffer);
@@ -394,6 +415,66 @@ void MilkdropPreset::LoadShaderCode()
             m_videoShader.reset();
         }
     }
+
+    // Optional warp_pre_ shader: a scratch pass run before the warp (see RenderFrame). Gated on the
+    // same version flag as the other shaders; a failure just drops the pass (the preset still draws,
+    // it simply has no precomputed alpha to read).
+    m_warpPreShader.reset();
+    if (m_state.warpShaderVersion > 0 && !m_state.warpPreShader.empty())
+    {
+        try
+        {
+            m_warpPreShader = std::make_unique<MilkdropShader>(MilkdropShader::ShaderType::WarpPreShader);
+            m_warpPreShader->LoadCode(m_state.warpPreShader);
+            LOG_DEBUG("[MilkdropPreset] Successfully loaded warp_pre shader code.");
+        }
+        catch (const Renderer::ShaderException& ex)
+        {
+            LOG_WARN("[MilkdropPreset] Error loading warp_pre shader code: " + ex.message() + " - Skipping the pre-warp pass.");
+            m_warpPreShader.reset();
+        }
+    }
+}
+
+void MilkdropPreset::RenderWarpPre()
+{
+    if (!m_warpPreShader)
+    {
+        return;
+    }
+
+    // Fullscreen triangle, matching the vertex shader this pass is compiled with (a single vec2
+    // position attribute at location 0). Created lazily: only presets that use warp_pre pay for it.
+    if (m_warpPreVao == 0)
+    {
+        glGenVertexArrays(1, &m_warpPreVao);
+        glBindVertexArray(m_warpPreVao);
+        glGenBuffers(1, &m_warpPreVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, m_warpPreVbo);
+        const float triangle[6] = {-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
+        glBufferData(GL_ARRAY_BUFFER, sizeof(triangle), triangle, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    // Draw into the "main" texture the warp is about to sample...
+    m_flipTexture.GetFramebuffer().BindDraw(0);
+    glViewport(0, 0, m_state.renderContext.viewportSizeX, m_state.renderContext.viewportSizeY);
+
+    // ...but ONLY its alpha: rgb is the image being fed back and must survive untouched.
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
+    glDisable(GL_BLEND);
+
+    m_warpPreShader->LoadVariables(m_state, m_perFrameContext);
+
+    glBindVertexArray(m_warpPreVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    Renderer::Shader::Unbind();
 }
 
 auto MilkdropPreset::ParseFilename(const std::string& filename) -> std::string

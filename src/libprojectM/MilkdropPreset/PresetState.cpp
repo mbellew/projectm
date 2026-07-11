@@ -177,6 +177,7 @@ void PresetState::Initialize(PresetFileParser& parsedFile)
     warpShader = parsedFile.GetCode("warp_");
     compositeShader = parsedFile.GetCode("comp_");
     videoShader = parsedFile.GetCode("video_");
+    warpPreShader = parsedFile.GetCode("warp_pre_");
 }
 
 void PresetState::LoadShaders()

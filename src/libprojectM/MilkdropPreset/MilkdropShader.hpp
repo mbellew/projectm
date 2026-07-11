@@ -32,9 +32,14 @@ public:
     {
         WarpShader,      //!< Warp shader
         CompositeShader, //!< Composite shader
-        VideoShader      //!< Video preprocess "combine" shader: computes the alpha (and optionally
+        VideoShader,     //!< Video preprocess "combine" shader: computes the alpha (and optionally
                          //!< rgb) written into the video history texture, from the live frame,
                          //!< the mask buffer (MaskSeg/MaskMotion/...) and the history (GetVideo).
+        WarpPreShader    //!< Pre-warp scratch pass: a fullscreen pass run BEFORE the warp, whose
+                         //!< ret.a is written into the main texture's alpha (rgb is left alone).
+                         //!< Lets a preset compute a per-pixel value ONCE and read it back at any
+                         //!< coordinate in the warp/comp shaders, instead of recomputing an
+                         //!< expensive kernel per sample. Returns float4; only .a is used today.
     };
 
     /**
