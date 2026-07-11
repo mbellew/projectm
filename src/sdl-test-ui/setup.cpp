@@ -398,6 +398,33 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
             projectm_set_texture_search_paths(projectMHandle, texturePathPtrs.data(), texturePathPtrs.size());
         }
 
+        // Transition shader search path(s). ';'-separated, "~" expands to $HOME. $PROJECTM_TRANSITION_PATH
+        // overrides the config key. Files here (*.frag) become the pool the engine picks random
+        // transitions from, and are addressable by name. Unset = the library's built-in transitions.
+        std::vector<std::string> transitionPaths;
+        if (const char* env = getenv("PROJECTM_TRANSITION_PATH"); env && env[0])
+        {
+            transitionPaths = splitPreferenceList(env);
+        }
+        else
+        {
+            transitionPaths = splitPreferenceList(config.read<std::string>("Transition Path", std::string()));
+        }
+        for (auto& path : transitionPaths)
+        {
+            path = expandTilde(path);
+        }
+        if (!transitionPaths.empty())
+        {
+            std::vector<const char*> transitionPathPtrs;
+            transitionPathPtrs.reserve(transitionPaths.size());
+            for (const auto& path : transitionPaths)
+            {
+                transitionPathPtrs.push_back(path.c_str());
+            }
+            projectm_set_transition_search_paths(projectMHandle, transitionPathPtrs.data(), transitionPathPtrs.size());
+        }
+
         // Palette image search path(s) for the PALETTE_NAME preset key. ';'-separated, "~" expands
         // to $HOME. A palette named "foo" loads "foo.png/.jpg" from here, else a built-in family.
         std::vector<std::string> palettePaths = splitPreferenceList(config.read<std::string>("Palette Path", std::string()));

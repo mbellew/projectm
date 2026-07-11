@@ -111,6 +111,18 @@ void ProjectM::SetPaletteSearchPaths(std::vector<std::string> paletteSearchPaths
     m_paletteSearchPaths = std::move(paletteSearchPaths);
 }
 
+void ProjectM::SetTransitionSearchPaths(std::vector<std::string> transitionSearchPaths)
+{
+    m_transitionSearchPaths = std::move(transitionSearchPaths);
+
+    // Compiling needs a GL context. Before Initialize() there is no manager yet; the paths are
+    // stored and picked up there instead.
+    if (m_transitionShaderManager)
+    {
+        m_transitionShaderManager->LoadFromPaths(m_transitionSearchPaths);
+    }
+}
+
 void ProjectM::ResetTextures()
 {
     m_textureManager = std::make_unique<Renderer::TextureManager>(m_textureSearchPaths);
@@ -268,6 +280,7 @@ void ProjectM::Initialize()
     m_shaderCache = std::make_unique<Renderer::ShaderCache>();
 
     m_transitionShaderManager = std::make_unique<Renderer::TransitionShaderManager>();
+    m_transitionShaderManager->LoadFromPaths(m_transitionSearchPaths);
 
     m_textureCopier = std::make_unique<Renderer::CopyTexture>();
 

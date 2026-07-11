@@ -188,6 +188,22 @@ void projectm_set_texture_search_paths(projectm_handle instance,
     projectMInstance->SetTexturePaths(texturePaths);
 }
 
+void projectm_set_transition_search_paths(projectm_handle instance,
+                                          const char** transition_search_paths,
+                                          size_t count)
+{
+    auto projectMInstance = handle_to_instance(instance);
+
+    std::vector<std::string> transitionPaths;
+
+    for (size_t index = 0; index < count; index++)
+    {
+        transitionPaths.emplace_back(transition_search_paths[index]);
+    }
+
+    projectMInstance->SetTransitionSearchPaths(transitionPaths);
+}
+
 void projectm_set_palette_search_paths(projectm_handle instance,
                                        const char** palette_search_paths,
                                        size_t count)

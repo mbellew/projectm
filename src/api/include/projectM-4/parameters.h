@@ -48,6 +48,26 @@ PROJECTM_EXPORT void projectm_set_texture_search_paths(projectm_handle instance,
                                                        size_t count);
 
 /**
+ * @brief Sets the search paths for transition shaders.
+ *
+ * Each file in these directories is a transition shader body (a `mainImage()`, with iChannel0 = the
+ * outgoing preset's output and iChannel1 = the incoming preset's). They form the pool the engine
+ * draws random transitions from, and are addressable by name (the filename without extension).
+ *
+ * The transitions compiled into the library remain as a fallback: if these paths are unset, missing
+ * or yield nothing, the built-in set is used, so there is always something to transition with.
+ *
+ * Compiles the shaders, so it requires a current OpenGL context.
+ *
+ * @param instance The projectM instance handle.
+ * @param transition_search_paths A list of transition shader search paths.
+ * @param count The number of paths in the list.
+ */
+PROJECTM_EXPORT void projectm_set_transition_search_paths(projectm_handle instance,
+                                                          const char** transition_search_paths,
+                                                          size_t count);
+
+/**
  * @brief Sets the search paths for color-palette image files (the PALETTE_NAME preset key).
  *
  * A palette named "foo" resolves to "foo.png"/".jpg" found in these paths; if no file is found,

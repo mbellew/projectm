@@ -118,6 +118,17 @@ public:
     /** @brief Sets the search paths for color-palette image files (PALETTE_NAME). Read at preset load. */
     void SetPaletteSearchPaths(std::vector<std::string> paletteSearchPaths);
 
+    /**
+     * @brief Sets the paths searched for transition shaders, and reloads them.
+     *
+     * Transitions found here are used for the random transition pool, and can be looked up by name
+     * (the filename without extension) -- which is how a preset will be able to ask for a specific
+     * one. The compiled-in transitions remain as a fallback if these paths yield nothing.
+     *
+     * @param transitionSearchPaths Directories to scan for transition shaders.
+     */
+    void SetTransitionSearchPaths(std::vector<std::string> transitionSearchPaths);
+
     void ResetTextures();
 
     /**
@@ -394,6 +405,7 @@ private:
 
     std::vector<std::string> m_textureSearchPaths;     ///!< List of paths to search for texture files
     std::vector<std::string> m_paletteSearchPaths;     ///!< Search paths for color-palette image files (PALETTE_NAME).
+    std::vector<std::string> m_transitionSearchPaths;  ///!< Search paths for transition shader files.
     Renderer::TextureLoadCallback m_textureLoadCallback; //!< Optional callback for loading textures from non-filesystem sources.
 
     /** Timing information */
