@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 namespace libprojectM {
@@ -526,6 +527,56 @@ void VideoTexture::ConvertAndDownscale(const uint8_t* src, int srcW, int srcH,
     const int srcChannels = (fmt == PixelFormat::RGB) ? 3 : 4;
     const int dstW = m_texWidth;
     const int dstH = m_texHeight;
+
+    // Fast path: the source already matches the texture, so there is nothing to filter -- this is
+    // a plain format conversion. It is a common case, not a corner one: the texture's long side
+    // follows the display aspect, so a 4:3 display yields a 640x480 texture and the camera
+    // typically negotiates exactly 640x480. The general loop below would still charge full box
+    // filter price for it -- four integer divides per destination pixel, a format switch *inside*
+    // the sample loop, and a final divide by a count that is always 1.
+    if (srcW == dstW && srcH == dstH)
+    {
+        const size_t n = static_cast<size_t>(dstW) * static_cast<size_t>(dstH);
+        switch (fmt)
+        {
+            case PixelFormat::RGB:
+                for (size_t i = 0; i < n; ++i)
+                {
+                    const uint8_t* p = src + i * 3;
+                    uint8_t* d = dst + i * 4;
+                    d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = 255;
+                }
+                break;
+            case PixelFormat::RGBA:
+                std::memcpy(dst, src, n * 4);
+                break;
+            case PixelFormat::RGBX:
+                for (size_t i = 0; i < n; ++i)
+                {
+                    const uint8_t* p = src + i * 4;
+                    uint8_t* d = dst + i * 4;
+                    d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = 255;
+                }
+                break;
+            case PixelFormat::BGRA:
+                for (size_t i = 0; i < n; ++i)
+                {
+                    const uint8_t* p = src + i * 4;
+                    uint8_t* d = dst + i * 4;
+                    d[0] = p[2]; d[1] = p[1]; d[2] = p[0]; d[3] = p[3];
+                }
+                break;
+            case PixelFormat::BGRX:
+                for (size_t i = 0; i < n; ++i)
+                {
+                    const uint8_t* p = src + i * 4;
+                    uint8_t* d = dst + i * 4;
+                    d[0] = p[2]; d[1] = p[1]; d[2] = p[0]; d[3] = 255;
+                }
+                break;
+        }
+        return;
+    }
 
     for (int dy = 0; dy < dstH; ++dy)
     {
