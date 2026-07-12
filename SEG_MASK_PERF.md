@@ -279,3 +279,126 @@ is the safe version; it is worth ~2 ms and can wait for real numbers.
   those numbers. Expect inference to collapse and the CPU share to rise.
 - Fix the model config (RVM primary).
 - Then, in order of measured payoff: cap capture resolution → pose/depth cadence → GPU composite.
+
+---
+
+# MEASURED — second pass: the deployment box (2026-07-12)
+
+Same day, on the **AtomMan G1 Pro / RTX 5060 / CUDA** — the machine the plan was written for. Config
+as deployed: RVM primary, Seg Quality 3 (512), depth gate on, YOLO-pose on.
+
+**Both of the first pass's predictions for this box were wrong.**
+
+1. *"Expect inference to collapse."* It did not. RVM@512 on CUDA is **10.3 ms**, not low-single-digit.
+2. *"Expect the CPU share to rise, making steps 3/6 the right move."* It did not — because the camera
+   negotiates **640x480**, not 1080p. All the full-res CPU work totals ~5 ms.
+
+Baseline: **~32 ms/frame** — inference 10.3 + depth gate 9.4 + pose 6.3 + composite 2.1 + submit 2.1
++ rgb/harden/centroid 1.0. The models are ~82% of the frame. Against a 33 ms camera interval, that is
+**~1 ms of headroom**.
+
+## Finding C: display *aspect* silently picks the camera mode — and the whole cost curve with it
+
+`FPS = 30` in config means every mode this camera offers meets the FPS floor, so the selector falls
+through to **display aspect** (`videoCapture_linux.cpp` `selectCaptureFormat`). The 1024x768 projector
+is 4:3, and the only 4:3 modes offered are 320x240 and 640x480 — hence 640x480, hence a cheap frame.
+
+Force a 16:9 aspect (a venue TV) and the very same code negotiates **1920x1080 MJPEG**: 60 ms/frame,
+dropping a stale frame nearly every iteration — roughly half the camera's rate, permanently behind.
+**Finding 1 of the original review is correct after all; it just needs a 16:9 display to show up.**
+The full-res CPU stages scale with capture megapixels, the two models do not:
+
+| Stage | 640x480 (4:3) | 1280x720 | 1920x1080 (16:9) |
+|---|---|---|---|
+| seg inference | 10.3 | 10.5 | 10.6 |
+| pose | 6.3 | 5.6 | 5.9 |
+| depth gate | 9.4 | 12.1 | 20.1 |
+| composite | 2.1 | 6.1 | 13.8 |
+| harden / rgb / centroid / submit | 3.1 | 5.4 | 9.6 |
+| **TOTAL** | **~32** | **~40** | **~60** |
+
+Note the video *history texture is 852x480 regardless of display* (`setup.cpp`: short side pinned at
+480; only the long side follows the aspect), and the seg model is <=512px. Capturing 1080p to feed
+that is pure waste. This is independent of the [1080, 2160] internal-render floor in
+`projectMSDL::applyRenderSize()` — three different sizes, often conflated:
+**main/feedback texture** (window x supersample, floored at 1080) vs **video history texture**
+(852x480, fixed) vs **camera capture** (negotiated, now capped).
+
+## Finding D: the depth gate is 7.5 ms of model + 6 ms/megapixel of CPU apply
+
+Fitting the three resolutions above: depth cost ~= **7.5 ms fixed + ~6 ms/Mpx**. The fixed part is
+Depth Anything V2; the per-megapixel part was **step 7 alone** — a full-res bilinear fetch per pixel
+to multiply the coarse keep-grid into alpha. The decision-making (grid, connected components, anchor)
+is O(grid) and free. So "the depth gate is expensive" was half a depth problem and half the *same*
+full-res compositing problem.
+
+## Landed in this pass
+
+1. **Drain V4L2 to the newest frame** (`588c28e2`). Not a throughput fix — a latency fix. The 496 ms
+   startup frame (CUDA warmup) buries 2-3 buffers; the old one-DQBUF-per-iteration loop would work
+   through them FIFO and run ~100 ms behind *for the rest of the session*. Now stale buffers are
+   requeued and only the newest is decoded, so a hitch costs one frame, not a permanent lag.
+   `PROJECTM_VIDEO_DROP_DEBUG=1` logs the drops (without it the fix is invisible).
+2. **Cap capture at 720p** (`588c28e2`). 16:9 only: **60.2 -> 39.7 ms**. No quality cost — 720p still
+   exceeds the 852x480 texture and the 512px model in every dimension. 4:3 unaffected.
+3. **`PROJECTM_DISPLAY_ASPECT`** (`0bdc091a`). Negotiate the camera mode a *different* display would
+   pick, from this desk. Finding C is invisible without it.
+4. **Apply the alpha gate on the GPU** (`d012a60e`). New library API
+   (`projectm_video_submit_alpha_gate`): the app hands over the coarse keep-grid and the preprocess
+   shader multiplies it into the matte — in **both** the processed alpha and the mask buffer's seg
+   channel (seg reads the *input* alpha, so gating only the former would leave presets sampling
+   `mask.r` still seeing the gated-out people). Deletes step 7's full-res pass:
+   **4:3 32.0 -> 29.5 ms; 16:9 39.7 -> 34.0 ms.**
+   The two CPU consumers of the matte — the alpha-weighted centroid and the pose->touch wrist
+   confidence — no longer get gating for free, and now weight themselves via `SegMasker::SampleGate`.
+   *Miss this and a gated-out spectator's wrist silently keeps full confidence and can drive the
+   touch bridge.* The centroid also strides by 4 (a centroid is an integral; 1/16th the work).
+
+Verified: a forced-constant gate scales GPU alpha exactly linearly (1.0 -> mean 0.145, 0.5 -> 0.075,
+0.0 -> 0.000), and screenshots show a clean silhouette at gate=1, an empty frame at gate=0.
+
+## Where the frame stands
+
+| | original | + drain/cap | + GPU gate | (+ depth 196, not applied) |
+|---|---|---|---|---|
+| 4:3 projector | 32.0 | 32.0 | **29.5** | 25.5 |
+| 16:9 TV | 60.2 | 39.7 | **34.0** | 30.8 |
+
+The 16:9 case went from ~half the camera rate to roughly keeping pace. It is still marginally over
+the 33 ms interval; depth-input size (below) is what would close that.
+
+## Open: depth input size, to be decided with the pose-gating story
+
+`PROJECTM_SEG_DEPTH_SIZE` (default 392 long side) is now the largest lever left. Measured at 640x480:
+
+| long side | depth cost | refClose (the gate's reference) |
+|---|---|---|
+| 392 (default) | 7.2 ms | 0.32 |
+| 308 | 5.0 ms | 0.35 |
+| 196 | 3.2 ms | 0.37 |
+| 140 | 2.7 ms | **0.16 — keep threshold goes negative; the gate silently stops gating** |
+
+**Not defaulted, deliberately.** The sweep had only *one person* in frame, so it shows cost and shows
+the depth statistics stay stable down to 196 — but it never exercises the thing the gate exists for:
+ranking a subject against a spectator. That needs a two-person scene.
+
+More to the point, "how much depth resolution does the gate need?" is really a question about *what
+the gate is for*, which is entangled with the parked idea of **using pose to inform the alpha gate**
+(pose boxes give per-person identity nearly free, and we already pay for YOLO-pose every frame). Decide
+the two together rather than tuning a number that a pose-informed gate may make moot.
+
+## Re-ranked plan
+
+1. **Pose-informed alpha gate + depth input size**, together (above). Depth stays — it looks effective
+   and pose/depth are likely complementary, not either/or.
+2. **Cadence-decouple pose** (~6 ms). Note the depth gate's own cadence is now a *worse* idea than it
+   looks: the keep mask is ANDed into the subject's own alpha, so a stale grid clips a fast-moving
+   limb (~130 ms of staleness moves a hand well past the 1-cell grow margin). If cadence is used,
+   dilate `grow` with staleness or union the grid over recent frames.
+3. **Fuse composite + harden** (6.2 + 1.1 ms at 720p): three full-res passes became two; they could be
+   one loop (`a = harden(sampleMatte(...))`) — or move to the GPU behind `SubmitFrameGPU` now that the
+   gate plumbing exists.
+4. **FP16 RVM export** — inference (10.3 ms) is now the single largest item, so this is worth *more*
+   than the original doc credited, not less.
+5. **libjpeg-turbo** — only on a 16:9 display, where the camera hands us MJPEG (its YUYV modes top out
+   at 640x480) and the stb_image decode sits on the capture thread, outside the numbers above.
