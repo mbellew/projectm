@@ -320,11 +320,14 @@ void projectMSDL::startVideoCapture()
                 // 0.7 = an off-matte wrist keeps 70% of its confidence. A fast wave is often clipped
                 // by the seg matte, so this must stay high or the gesture we track gets erased.
                 const float alphaFloor = envF("PROJECTM_POSE_ALPHA_FLOOR", 0.7f);
+                // Forearm extrapolation past the wrist to approximate the hand/fingertip (COCO-17
+                // has no finger keypoints). 0 = draw at the wrist itself.
+                const float reach = envF("PROJECTM_POSE_REACH", 0.45f);
 
                 // Library owns the mirror (projectm_video_set_mirror), so the matte
                 // travels with the RGB either way — seg passes mirror=false.
                 const bool segOk = _videoCapture->Start(
-                    [handle, masker, outBuf, pose, this, confFloor, alphaFloor](
+                    [handle, masker, outBuf, pose, this, confFloor, alphaFloor, reach](
                         const void* data, int width, int height, VideoCapture::PixelFormat /*fmt*/) {
                         masker->Process(static_cast<const uint8_t*>(data), width, height,
                                         /*mirror=*/false, *outBuf);
@@ -372,37 +375,104 @@ void projectMSDL::startVideoCapture()
                             coverage = static_cast<float>(sumA / (static_cast<double>(width) * height));
                         }
 
-                        // Prefer a pose-derived chest/heart point when a confident torso is present:
-                        // the matte centroid sits at the belly-button, whereas the shoulder midpoint
-                        // dropped a little toward the hips is roughly the heart. Un-mirrored, like the
-                        // matte centroid (the library mirrors internally). Best (first) person only.
-                        // The drop is deliberately shallow (0.15, not sternum-deep) -- the heart sits
-                        // much closer to the shoulder line than to the shoulder/hip midpoint.
-                        if (!poses.empty())
-                        {
-                            const PersonPose& p = poses.front();
-                            const Keypoint& ls = p[Kpt::LeftShoulder];
-                            const Keypoint& rs = p[Kpt::RightShoulder];
-                            if (ls.conf > 0.4f && rs.conf > 0.4f)
-                            {
-                                float chestX = (ls.x + rs.x) * 0.5f;
-                                float chestY = (ls.y + rs.y) * 0.5f;
-                                const Keypoint& lh = p[Kpt::LeftHip];
-                                const Keypoint& rh = p[Kpt::RightHip];
-                                if (lh.conf > 0.3f && rh.conf > 0.3f)
-                                {
-                                    chestX += 0.15f * ((lh.x + rh.x) * 0.5f - chestX);
-                                    chestY += 0.15f * ((lh.y + rh.y) * 0.5f - chestY);
-                                }
-                                else
-                                {
-                                    chestY -= 0.04f; // no hips: nudge just below the shoulder line
-                                }
-                                cx = std::clamp(chestX, 0.0f, 1.0f);
-                                cy = std::clamp(chestY, 0.0f, 1.0f);
-                            }
-                        }
+                        // seg_cx/seg_cy are EXACTLY the matte centroid -- always, with no pose
+                        // dependency. (An earlier version substituted a pose chest point here, which
+                        // made seg_cx mean two different things depending on whether a pose model
+                        // happened to be loaded. The chest is now pose(JOINT_HEART, ...) instead --
+                        // carrying over the shallow-drop tuning that anchor had learned.)
                         projectm_video_set_seg_centroid(handle, cx, cy, coverage);
+
+                        // Submit the skeleton itself: raw COCO-17 plus the derived joints presets
+                        // actually want (HEART, hand tips, HEAD, PELVIS). Camera-native X -- the
+                        // library applies the mirror. See POSE_API.md.
+                        if (pose)
+                        {
+                            projectm_pose_joint joints[PROJECTM_JOINT_COUNT]{};
+                            for (auto& joint : joints)
+                            {
+                                joint.z = -1.0f; // no depth unless we can sample it
+                            }
+
+                            if (!poses.empty())
+                            {
+                                const PersonPose& p = poses.front(); // the performer
+                                auto put = [&](int idx, float jx, float jy, float jconf) {
+                                    joints[idx].x = std::clamp(jx, 0.0f, 1.0f);
+                                    joints[idx].y = std::clamp(jy, 0.0f, 1.0f);
+                                    joints[idx].z = masker->HasDepth() ? masker->SampleDepth(jx, jy) : -1.0f;
+                                    joints[idx].confidence = std::clamp(jconf, 0.0f, 1.0f);
+                                };
+
+                                // Raw COCO-17: PersonPose uses the same ordering as the API enum.
+                                for (int k = 0; k < kKeypointCount; ++k)
+                                {
+                                    put(k, p.kpts[k].x, p.kpts[k].y, p.kpts[k].conf);
+                                }
+
+                                const Keypoint& ls = p[Kpt::LeftShoulder];
+                                const Keypoint& rs = p[Kpt::RightShoulder];
+                                const Keypoint& lhip = p[Kpt::LeftHip];
+                                const Keypoint& rhip = p[Kpt::RightHip];
+
+                                // PELVIS: hip midpoint.
+                                if (lhip.conf > 0.3f && rhip.conf > 0.3f)
+                                {
+                                    put(PROJECTM_JOINT_PELVIS, (lhip.x + rhip.x) * 0.5f,
+                                        (lhip.y + rhip.y) * 0.5f, std::min(lhip.conf, rhip.conf));
+                                }
+
+                                // HEART: shoulder midpoint dropped toward the hips. The drop is
+                                // deliberately SHALLOW (0.15, not sternum-deep) -- the heart sits much
+                                // closer to the shoulder line than to the shoulder/hip midpoint.
+                                if (ls.conf > 0.4f && rs.conf > 0.4f)
+                                {
+                                    float hx = (ls.x + rs.x) * 0.5f;
+                                    float hy = (ls.y + rs.y) * 0.5f;
+                                    if (lhip.conf > 0.3f && rhip.conf > 0.3f)
+                                    {
+                                        hx += 0.15f * ((lhip.x + rhip.x) * 0.5f - hx);
+                                        hy += 0.15f * ((lhip.y + rhip.y) * 0.5f - hy);
+                                    }
+                                    else
+                                    {
+                                        hy -= 0.04f; // no hips: nudge just below the shoulder line
+                                    }
+                                    put(PROJECTM_JOINT_HEART, hx, hy, std::min(ls.conf, rs.conf));
+                                }
+
+                                // Hand tips: COCO-17 has no fingers, so extend the forearm past the wrist.
+                                auto putHand = [&](int idx, const Keypoint& wrist, const Keypoint& elbow) {
+                                    if (wrist.conf <= 0.1f) { return; }
+                                    float hx = wrist.x;
+                                    float hy = wrist.y;
+                                    if (elbow.conf > 0.3f && reach > 0.0f)
+                                    {
+                                        hx = wrist.x + (wrist.x - elbow.x) * reach;
+                                        hy = wrist.y + (wrist.y - elbow.y) * reach;
+                                    }
+                                    put(idx, hx, hy, wrist.conf);
+                                };
+                                putHand(PROJECTM_JOINT_L_HAND, p[Kpt::LeftWrist], p[Kpt::LeftElbow]);
+                                putHand(PROJECTM_JOINT_R_HAND, p[Kpt::RightWrist], p[Kpt::RightElbow]);
+
+                                // HEAD: ear midpoint if available (steadier than the nose), else the
+                                // nose; lifted a little so a halo/crown sits above the face.
+                                const Keypoint& lear = p[Kpt::LeftEar];
+                                const Keypoint& rear = p[Kpt::RightEar];
+                                const Keypoint& nose = p[Kpt::Nose];
+                                if (lear.conf > 0.3f && rear.conf > 0.3f)
+                                {
+                                    put(PROJECTM_JOINT_HEAD, (lear.x + rear.x) * 0.5f,
+                                        (lear.y + rear.y) * 0.5f + 0.03f, std::min(lear.conf, rear.conf));
+                                }
+                                else if (nose.conf > 0.3f)
+                                {
+                                    put(PROJECTM_JOINT_HEAD, nose.x, nose.y + 0.04f, nose.conf);
+                                }
+                            }
+
+                            projectm_pose_set(handle, joints, PROJECTM_JOINT_COUNT);
+                        }
 
                         // Turn each detected wrist into a HandObservation (seg-fused: matte alpha
                         // weights confidence, depth = wrist closeness) and stash for the main-thread
@@ -416,11 +486,19 @@ void projectMSDL::startVideoCapture()
                                 const int row = std::clamp(static_cast<int>((1.0f - ny) * (height - 1) + 0.5f), 0, height - 1);
                                 return rgba[(static_cast<size_t>(row) * width + col) * 4 + 3] / 255.0f;
                             };
+                            // COCO-17 has no finger keypoints (stops at the wrist), so estimate the
+                            // hand/fingertip by extending the forearm past the wrist:
+                            //   tip = wrist + (wrist - elbow) * reach.  reach ~0.4 ~= hand/forearm.
                             auto addHand = [&](std::vector<HandObservation>& hands, const Keypoint& wrist,
                                                const Keypoint& elbow, const Keypoint& shoulder) {
                                 if (wrist.conf < confFloor) { return; } // ignore very uncertain wrists
-                                const float rawX = wrist.x; // un-mirrored camera space (matches matte/depth)
-                                const float rawY = wrist.y;
+                                float rawX = wrist.x; // un-mirrored camera space (matches matte/depth)
+                                float rawY = wrist.y;
+                                if (elbow.conf > 0.3f && reach > 0.0f)
+                                {
+                                    rawX = std::clamp(wrist.x + (wrist.x - elbow.x) * reach, 0.0f, 1.0f);
+                                    rawY = std::clamp(wrist.y + (wrist.y - elbow.y) * reach, 0.0f, 1.0f);
+                                }
                                 const float alpha = sampleAlpha(rawX, rawY);
                                 const float depth = masker->HasDepth() ? masker->SampleDepth(rawX, rawY) : -1.0f;
                                 // Matte-alpha weights confidence but never fully kills it (the matte

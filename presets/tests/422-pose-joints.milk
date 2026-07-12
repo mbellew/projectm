@@ -1,0 +1,67 @@
+// Pose API test: draws a dot at EVERY joint of the skeleton.
+//
+// This exercises the two things that justify the pose(JOINT, VAR) function form:
+//   1. COMPUTED INDICES -- `instance` (0..JOINT_COUNT-1) is used directly as the joint index, so one
+//      shape with num_inst=22 draws the whole skeleton. Impossible with named variables.
+//   2. SHAPE ACCESS -- this is custom-shape code, which can NOT see touch_* (shapes only get
+//      q1..q32 / t1..t8). pose() is registered in every eval context, so it works here directly.
+//
+// Alpha = POSE_CONF, so a joint fades out when the tracker loses it. Color = joint index.
+// Requires: Video Mask = seg + a Video Pose Model. With no camera, nothing draws (conf 0).
+[preset00]
+fDecay=0.55
+fGammaAdj=1.0
+zoom=1.0
+rot=0
+warp=0
+sx=1
+sy=1
+fWaveAlpha=0
+ob_size=0.0
+ob_a=0.0
+ib_size=0.0
+ib_a=0.0
+
+// Border flashes as the hands come together (a derived "robust primitive" scalar).
+per_frame_1=ob_size = 0.02;
+per_frame_2=ob_a = pose_hands_together;
+per_frame_3=ob_r = 1.0;
+per_frame_4=ob_g = 0.9;
+per_frame_5=ob_b = 0.2;
+// pose_lunge spikes on a sudden move -- brighten everything briefly.
+per_frame_6=ib_size = 0.01;
+per_frame_7=ib_a = min(1, pose_lunge);
+
+shapecode_0_enabled=1
+shapecode_0_sides=12
+shapecode_0_additive=1
+shapecode_0_thickOutline=0
+shapecode_0_textured=0
+shapecode_0_num_inst=22
+shapecode_0_x=0.500
+shapecode_0_y=0.500
+shapecode_0_rad=0.022
+shapecode_0_ang=0.00000
+shapecode_0_tex_ang=0.00000
+shapecode_0_tex_zoom=1.00000
+shapecode_0_r=1.000
+shapecode_0_g=1.000
+shapecode_0_b=1.000
+shapecode_0_a=1.000
+shapecode_0_r2=1.000
+shapecode_0_g2=1.000
+shapecode_0_b2=1.000
+shapecode_0_a2=0.000
+shapecode_0_border_a=0.000
+// instance IS the joint index. If the skeleton appears vertically flipped, change POSE_Y to
+// (1 - pose(instance, POSE_Y)) -- shape space orientation is the one thing not yet verified.
+shape_0_per_frame1=x = pose(instance, POSE_X);
+shape_0_per_frame2=y = pose(instance, POSE_Y);
+shape_0_per_frame3=a = pose(instance, POSE_CONF);
+shape_0_per_frame4=a2 = 0;
+shape_0_per_frame5=r = 0.5 + 0.5*sin(instance*0.7);
+shape_0_per_frame6=g = 0.5 + 0.5*sin(instance*0.7 + 2.1);
+shape_0_per_frame7=b = 0.5 + 0.5*sin(instance*0.7 + 4.2);
+shape_0_per_frame8=r2 = r; g2 = g; b2 = b;
+// Hands get a bigger dot so they read as the "business end".
+shape_0_per_frame9=rad = if(above(instance,17)*below(instance,20), 0.05, 0.022);
