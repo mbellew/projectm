@@ -446,6 +446,41 @@ The trap to avoid: do **not** downscale the camera frame early to texture resolu
 reading upsampled pixels. Keep building the full-res RGB (0.8 ms) and let the models sample it as they
 do now — just stop materializing a full-res *composited* frame whose only purpose is to be shrunk.
 
+## Finding H: the ORT Memcpy node is a red herring (and EP placement is a STATIC analysis)
+
+`PROJECTM_ONNX_DUMP=<dir>` (`7172ff34`) writes each model's post-optimization graph and logs ORT's
+per-node EP placement. ORT decides placement when it **builds** the session, so this needs no
+inference run and no profiler:
+
+| model | CUDA nodes | CPU nodes | Memcpy inserted |
+|---|---|---|---|
+| RVM (seg) | 295 | 9 (Slice x7, Concat x2) | **1** |
+| Depth Anything V2 | 449 | 128 (Concat/Unsqueeze/Gather) | **0** |
+
+Depth's 128 CPU nodes are int64 *shape arithmetic* — scalar bookkeeping ORT keeps on CPU on purpose.
+No data copies. Not a problem.
+
+The RVM Memcpy traces (via `onnx` in Python) to exactly one tensor:
+`388 = Concat([1,1], downsample_ratio, downsample_ratio)` — the **scales input to `Resize_3`**. CUDA's
+Resize kernel wants its scales in host memory, and `downsample_ratio` is a graph *input*, so it cannot
+be constant-folded: ORT computes it on the GPU and copies it back **every frame**.
+
+Folding it to a constant `[1,1,1,1]` works (we always pass ratio 1.0 — we downscale to the seg size
+ourselves). Keep `downsample_ratio` as a graph input or **RVM family detection breaks** and the model
+loads as MODNet, unbound recurrent inputs and all (`Missing Input: r4i`).
+
+**Result: Memcpy 1 -> 0, matte unchanged, and `infer` unchanged at 10.3 ms. No win.**
+
+Because the copy is **four floats — 16 bytes**. It is not a bandwidth cost at all; its only cost is
+that it *blocks CUDA Graph capture* (exactly what ORT's warning says) — and **we never enabled CUDA
+Graphs**, so removing the blocker buys nothing by itself. Cashing it in means enabling CUDA Graphs,
+which has its own blocker: the IoBinding swaps the recurrent-state buffers every frame and CUDA Graphs
+require stable device addresses.
+
+Lesson: the mem->vmem wins so far (full-res composite, the 1:1 box filter) were about **volume**. This
+one is about **synchronization**. Don't assume a copy is expensive because it is a copy — 30 minutes of
+static analysis said so before a day was spent on CUDA Graphs expecting a payoff.
+
 ## The headroom menu (from 29.5 ms on the projector)
 
 Budget today: RVM Run 8.6 | depth 7.3 | pose 6.3 | RVM preprocess 2.8 | composite 2.1 | submit 2.1 |
@@ -477,8 +512,11 @@ Cheap route to ~18 ms exists (Q2 + depth 196 + pose cadence) but spends matte cr
 2. **Composite at texture resolution** (Finding G; the 1:1 `ConvertAndDownscale` fast path is done). No
    quality cost; the gate plumbing (`projectm_video_submit_alpha_gate`) is the same road if it goes to
    the GPU.
-3. **FP16 RVM export** (Finding F).
-4. **Profile the 8.6 ms Run**, then decide on running the three models concurrently.
+3. **FP16 RVM export** (Finding F). Still the best lever on the 8.6 ms Run — for **bandwidth** reasons
+   (depthwise convs at 512x512 stream large activations), not copies. Finding H ruled the copies out.
+4. **Profile the 8.6 ms Run**, then decide on running the three models concurrently. If CUDA Graphs are
+   attempted, note Finding H: the Memcpy blocker is removable offline, but the recurrent-state
+   IoBinding swap (unstable device addresses) is the harder one.
 5. **Cadence-decouple pose** (~6 ms). Note the depth gate's own cadence is a *worse* idea than it looks:
    the keep mask is ANDed into the subject's own alpha, so a stale grid clips a fast-moving limb
    (~130 ms of staleness moves a hand well past the 1-cell grow margin). If cadence is used, dilate
