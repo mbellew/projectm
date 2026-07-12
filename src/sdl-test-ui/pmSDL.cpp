@@ -57,6 +57,14 @@ auto dispatchLoadProc(const char* name, void* userData) -> void*
 // 0 when unknown, which disables the capture-side aspect preference.
 auto desktopAspect() -> double
 {
+    // $PROJECTM_DISPLAY_ASPECT overrides, so the camera mode a different display would
+    // negotiate (e.g. 16:9 venue TV vs a 4:3 projector) can be measured from this desk.
+    if (const char* env = std::getenv("PROJECTM_DISPLAY_ASPECT"); env && env[0])
+    {
+        const double a = std::atof(env);
+        if (a > 0.0) { return a; }
+    }
+
     SDL_DisplayMode dm;
     if (SDL_GetDesktopDisplayMode(0, &dm) == 0 && dm.h > 0)
     {
