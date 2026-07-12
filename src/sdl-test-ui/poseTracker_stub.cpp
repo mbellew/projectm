@@ -38,3 +38,9 @@ void PoseTracker::Process(const uint8_t* /*bgra*/, int /*w*/, int /*h*/, bool /*
 {
     out.clear();
 }
+
+void PoseTracker::ProcessRgb(const uint8_t* /*rgb*/, int /*w*/, int /*h*/,
+                             std::vector<PersonPose>& out)
+{
+    out.clear();
+}

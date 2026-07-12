@@ -176,7 +176,8 @@ void PoseTracker::Process(const uint8_t* bgra, int w, int h, bool mirror,
         return;
     }
 
-    // BGRA -> interleaved RGB (optionally mirrored). The seg path keeps mirror=false.
+    // BGRA -> interleaved RGB (optionally mirrored). Only needed when there is no seg masker to
+    // borrow the already-converted frame from -- see ProcessRgb / SegMasker::RgbFrame().
     m_impl->rgbBuf.resize(static_cast<size_t>(w) * h * 3);
     uint8_t* rgb = m_impl->rgbBuf.data();
     for (int y = 0; y < h; ++y)
@@ -190,6 +191,17 @@ void PoseTracker::Process(const uint8_t* bgra, int w, int h, bool mirror,
             d[1] = p[1]; // G
             d[2] = p[0]; // B
         }
+    }
+
+    ProcessRgb(m_impl->rgbBuf.data(), w, h, out);
+}
+
+void PoseTracker::ProcessRgb(const uint8_t* rgb, int w, int h, std::vector<PersonPose>& out)
+{
+    out.clear();
+    if (!m_impl->session || rgb == nullptr || w <= 0 || h <= 0)
+    {
+        return;
     }
 
     // Letterbox into the square model input.

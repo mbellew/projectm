@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -253,6 +254,8 @@ struct SegMasker::Impl
     int depthMapH{0};
     std::vector<int> ccLabel;           // connected-component label per grid cell (-1 = background)
     std::vector<float> cellWeight;      // per-grid-cell keep weight (1 = keep, 0 = drop)
+
+    SegTimings timings{}; //!< Per-stage cost of the last Process() (see SEG_MASK_PERF.md).
 
     // Matte-hardening smoothstep edges (see HardenAlpha). lo<=0 && hi>=1 => disabled (raw matte).
     float hardenLo{0.0f};
@@ -534,10 +537,30 @@ float SegMasker::SampleDepth(float fx, float fy) const
 void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
                         std::vector<uint8_t>& outRGBA)
 {
+    // Per-stage timing (see SegTimings / SEG_MASK_PERF.md). Process() has several early returns,
+    // so totalMs is closed out by a scope guard rather than a line at the end.
+    using Clock = std::chrono::steady_clock;
+    auto elapsedMs = [](Clock::time_point from, Clock::time_point to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+    };
+    struct TotalTimer
+    {
+        Clock::time_point start;
+        double& out;
+        ~TotalTimer()
+        {
+            out = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+        }
+    };
+    m_impl->timings = SegTimings{};
+    const auto tStart = Clock::now();
+    const TotalTimer totalTimer{tStart, m_impl->timings.totalMs};
+
     outRGBA.resize(static_cast<size_t>(w) * h * 4);
     m_impl->rgbBuf.resize(static_cast<size_t>(w) * h * 3);
 
-    // Build the (optionally mirrored) RGB output frame the matte will align to.
+    // Build the (optionally mirrored) RGB output frame the matte will align to. The pose tracker
+    // reuses this buffer via RgbFrame() instead of redoing the identical conversion.
     for (int y = 0; y < h; ++y)
     {
         for (int x = 0; x < w; ++x)
@@ -550,6 +573,8 @@ void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
             rgb[2] = s[0];
         }
     }
+    const auto tRgbDone = Clock::now();
+    m_impl->timings.rgbMs = elapsedMs(tStart, tRgbDone);
 
     auto passthrough = [&]() {
         for (int i = 0; i < w * h; ++i)
@@ -948,6 +973,10 @@ void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
         }
     }
 
+    // Everything from the RGB build to here is preprocess + the ONNX Run itself.
+    const auto tInferDone = Clock::now();
+    m_impl->timings.inferMs = elapsedMs(tRgbDone, tInferDone);
+
     const float rx = static_cast<float>(matteW) / w;
     const float ry = static_cast<float>(matteH) / h;
     for (int y = 0; y < h; ++y)
@@ -964,8 +993,25 @@ void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
         }
     }
     multiplySecondary();
+    const auto tCompositeDone = Clock::now();
+    m_impl->timings.compositeMs = elapsedMs(tInferDone, tCompositeDone);
+
     HardenAlpha(w, h, outRGBA);
+    const auto tHardenDone = Clock::now();
+    m_impl->timings.hardenMs = elapsedMs(tCompositeDone, tHardenDone);
+
     ApplyDepthGate(w, h, outRGBA);
+    m_impl->timings.depthMs = elapsedMs(tHardenDone, Clock::now());
+}
+
+const SegTimings& SegMasker::LastTimings() const
+{
+    return m_impl->timings;
+}
+
+const uint8_t* SegMasker::RgbFrame() const
+{
+    return m_impl->rgbBuf.empty() ? nullptr : m_impl->rgbBuf.data();
 }
 
 // Contrast-harden the matte alpha through smoothstep(lo, hi, a). RVM (and other matting models)

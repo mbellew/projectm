@@ -18,6 +18,23 @@
 #include <string>
 #include <vector>
 
+/**
+ * Per-stage wall-clock cost of the last Process() call, in milliseconds. SEG_MASK_PERF.md's whole
+ * diagnosis (that the CPU work around the model dominates, not the model) is an ESTIMATE read off
+ * the code -- these numbers are how we confirm or refute it before acting on it.
+ *
+ * Fields not exercised by the active model family stay 0 (e.g. compositeMs on the YOLO path).
+ */
+struct SegTimings
+{
+    double rgbMs{0.0};       //!< BGRA -> interleaved RGB, at full camera res.
+    double inferMs{0.0};     //!< Preprocess (downscale/normalize) + the ONNX Run itself.
+    double compositeMs{0.0}; //!< Matte upscale + RGBA composite, at full camera res.
+    double hardenMs{0.0};    //!< HardenAlpha, at full camera res (0 when disabled).
+    double depthMs{0.0};     //!< ApplyDepthGate: an entire second model + connected components.
+    double totalMs{0.0};     //!< Whole Process() call.
+};
+
 class SegMasker
 {
 public:
@@ -94,6 +111,21 @@ public:
      * @param mirror Horizontally flip to a selfie-style view.
      */
     void Process(const uint8_t* bgra, int w, int h, bool mirror, std::vector<uint8_t>& outRGBA);
+
+    /** Per-stage cost of the last Process() call. See SegTimings. */
+    const SegTimings& LastTimings() const;
+
+    /**
+     * The interleaved RGB frame Process() built from the BGRA input (w*h*3), in the orientation
+     * Process() was given (i.e. mirrored only if it was asked to mirror).
+     *
+     * Exposed so the pose tracker can reuse it instead of converting the very same BGRA frame to
+     * the very same RGB a second time at full camera resolution, every frame -- which is what it
+     * used to do. Valid until the next Process() call, on the same thread.
+     *
+     * @return The buffer, or nullptr if Process() has not run yet.
+     */
+    const uint8_t* RgbFrame() const;
 
 private:
     /**

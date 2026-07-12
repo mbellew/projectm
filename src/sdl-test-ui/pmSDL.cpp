@@ -329,29 +329,53 @@ void projectMSDL::startVideoCapture()
                 const bool segOk = _videoCapture->Start(
                     [handle, masker, outBuf, pose, this, confFloor, alphaFloor, reach](
                         const void* data, int width, int height, VideoCapture::PixelFormat /*fmt*/) {
+                        // Per-stage timing for SEG_MASK_PERF.md. Everything in this callback runs
+                        // serially on the single capture thread, so these add up to the mask latency.
+                        const auto tCbStart = std::chrono::steady_clock::now();
+
                         masker->Process(static_cast<const uint8_t*>(data), width, height,
                                         /*mirror=*/false, *outBuf);
+                        const auto tSegDone = std::chrono::steady_clock::now();
+
                         projectm_video_submit_frame(handle, outBuf->data(),
                                                     static_cast<unsigned int>(width),
                                                     static_cast<unsigned int>(height),
                                                     PROJECTM_VIDEO_FORMAT_RGBA);
+                        const auto tSubmitDone = std::chrono::steady_clock::now();
 
                         // Run body-pose first (if enabled): its torso keypoints give a better
                         // "center" than the matte centroid, and its wrists drive the touch bridge.
                         static std::vector<PersonPose> poses;
+                        const auto tPoseStart = std::chrono::steady_clock::now();
                         if (pose)
                         {
-                            pose->Process(static_cast<const uint8_t*>(data), width, height,
-                                          /*mirror=*/false, poses);
+                            // Reuse the RGB frame the masker just built from this same BGRA input,
+                            // instead of converting the identical frame a second time at full camera
+                            // resolution (SEG_MASK_PERF.md, Finding 1 stage 8). Seg runs with
+                            // mirror=false, which is the orientation pose wants.
+                            const uint8_t* segRgb = masker->RgbFrame();
+                            if (segRgb != nullptr)
+                            {
+                                pose->ProcessRgb(segRgb, width, height, poses);
+                            }
+                            else
+                            {
+                                pose->Process(static_cast<const uint8_t*>(data), width, height,
+                                              /*mirror=*/false, poses);
+                            }
                         }
                         else
                         {
                             poses.clear();
                         }
+                        const double poseMs = std::chrono::duration<double, std::milli>(
+                                                  std::chrono::steady_clock::now() - tPoseStart)
+                                                  .count();
 
                         // Alpha-weighted centroid of the matte (the fallback "center") -> seg_*.
                         // Row 0 is the top of the frame; flip Y so cy matches preset per-pixel
                         // y (bottom-up). The library applies mirror and all smoothing.
+                        const auto tCentroidStart = std::chrono::steady_clock::now();
                         const uint8_t* px = outBuf->data();
                         double sumA = 0.0, sumXA = 0.0, sumYA = 0.0;
                         const double invW = (width > 1) ? 1.0 / (width - 1) : 0.0;
@@ -374,6 +398,9 @@ void projectMSDL::startVideoCapture()
                             cy = static_cast<float>(sumYA / sumA);
                             coverage = static_cast<float>(sumA / (static_cast<double>(width) * height));
                         }
+                        const double centroidMs = std::chrono::duration<double, std::milli>(
+                                                      std::chrono::steady_clock::now() - tCentroidStart)
+                                                      .count();
 
                         // seg_cx/seg_cy are EXACTLY the matte centroid -- always, with no pose
                         // dependency. (An earlier version substituted a pose chest point here, which
@@ -530,6 +557,33 @@ void projectMSDL::startVideoCapture()
                                 _poseHands.swap(hands);
                                 _poseFresh = true;
                             }
+                        }
+
+                        // Per-stage capture-thread cost (SEG_MASK_PERF.md step 1: "instrument first
+                        // -- everything below should be confirmed by these numbers"). Everything in
+                        // this callback is serial on one thread, so the total IS the mask latency
+                        // budget. PROJECTM_SEG_PERF_EVERY=N logs every Nth frame; 0 (default) = off.
+                        static const int perfEvery = []() {
+                            const char* v = std::getenv("PROJECTM_SEG_PERF_EVERY");
+                            return (v && v[0]) ? std::atoi(v) : 0;
+                        }();
+                        static int perfFrame = 0;
+                        if (perfEvery > 0 && (perfFrame++ % perfEvery) == 0)
+                        {
+                            const auto now = std::chrono::steady_clock::now();
+                            auto ms = [](auto from, auto to) {
+                                return std::chrono::duration<double, std::milli>(to - from).count();
+                            };
+                            const SegTimings& st = masker->LastTimings();
+                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                        "[SegPerf] %dx%d | TOTAL %.1f ms || seg %.1f (rgb %.1f, infer %.1f, "
+                                        "composite %.1f, harden %.1f, depth %.1f) | submit %.1f | pose %.1f | "
+                                        "centroid %.1f | rest %.1f",
+                                        width, height, ms(tCbStart, now),
+                                        st.totalMs, st.rgbMs, st.inferMs, st.compositeMs, st.hardenMs,
+                                        st.depthMs, ms(tSegDone, tSubmitDone), poseMs, centroidMs,
+                                        ms(tCbStart, now) - st.totalMs - ms(tSegDone, tSubmitDone) -
+                                            poseMs - centroidMs);
                         }
                     },
                     preferredDevices,

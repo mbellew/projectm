@@ -89,6 +89,17 @@ public:
      */
     void Process(const uint8_t* bgra, int w, int h, bool mirror, std::vector<PersonPose>& out);
 
+    /**
+     * Same as Process(), but takes an already-converted interleaved RGB frame (w*h*3).
+     *
+     * The seg masker already builds exactly this buffer from the same BGRA frame every frame
+     * (SegMasker::RgbFrame()); converting it a second time here was pure duplicated work at full
+     * camera resolution. When seg is running, feed its buffer in instead.
+     *
+     * The frame must already be in the desired orientation (this does not mirror).
+     */
+    void ProcessRgb(const uint8_t* rgb, int w, int h, std::vector<PersonPose>& out);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

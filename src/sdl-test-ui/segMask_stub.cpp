@@ -45,6 +45,17 @@ bool SegMasker::IsLoaded() const
     return false;
 }
 
+const SegTimings& SegMasker::LastTimings() const
+{
+    static const SegTimings kNone{};
+    return kNone;
+}
+
+const uint8_t* SegMasker::RgbFrame() const
+{
+    return nullptr;
+}
+
 bool SegMasker::HasDepth() const
 {
     return false;
