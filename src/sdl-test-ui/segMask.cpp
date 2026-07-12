@@ -216,6 +216,11 @@ struct SegMasker::Impl
     float normScale{1.0f / 127.5f};     // MODNet default
     float normBias{-1.0f};
     float downsampleRatio{1.0f};
+    // An fp16 RVM export keeps src/pha float32 (the CPU builds one and reads the other) but makes the
+    // recurrent state and downsample_ratio half — those live on the device and never touch the CPU.
+    // The bound tensors must match, or ORT rejects the Run with a type error.
+    bool rvmFp16{false};
+    Ort::Float16_t ratioVal16{0.0f};
 
     // RVM recurrent state (r1i..r4i), carried frame to frame. When running on the CUDA EP these
     // are kept device-resident (see binding) so they never round-trip to host between frames.
@@ -335,15 +340,38 @@ bool SegMasker::Load(const std::string& modelPath, int size, float downsampleRat
             m_impl->inW = m_impl->inH = segSize;
             m_impl->downsampleRatio =
                 EnvFloat("PROJECTM_SEG_DOWNSAMPLE", downsampleRatio > 0.0f ? downsampleRatio : 1.0f);
+            // An fp16 export makes the recurrent state (and downsample_ratio) half-precision; src and
+            // pha stay float32. Detect it from r1i's declared type and match when binding.
+            for (size_t i = 0; i < m_impl->inNames.size(); ++i)
+            {
+                if (m_impl->inNames[i] == "r1i")
+                {
+                    m_impl->rvmFp16 = m_impl->session->GetInputTypeInfo(i)
+                                          .GetTensorTypeAndShapeInfo()
+                                          .GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16;
+                }
+            }
+            m_impl->ratioVal16 = Ort::Float16_t(m_impl->downsampleRatio);
+
             // Zero-initialize the recurrent state; RVM grows it internally and we
             // feed each frame's r*o back as the next r*i.
             m_impl->recurrent.clear();
             const std::array<int64_t, 4> zeroShape{1, 1, 1, 1};
             for (int k = 0; k < 4; ++k)
             {
-                auto t = Ort::Value::CreateTensor<float>(m_impl->alloc, zeroShape.data(), zeroShape.size());
-                *t.GetTensorMutableData<float>() = 0.0f;
-                m_impl->recurrent.push_back(std::move(t));
+                if (m_impl->rvmFp16)
+                {
+                    auto t = Ort::Value::CreateTensor<Ort::Float16_t>(m_impl->alloc, zeroShape.data(),
+                                                                      zeroShape.size());
+                    *t.GetTensorMutableData<Ort::Float16_t>() = Ort::Float16_t(0.0f);
+                    m_impl->recurrent.push_back(std::move(t));
+                }
+                else
+                {
+                    auto t = Ort::Value::CreateTensor<float>(m_impl->alloc, zeroShape.data(), zeroShape.size());
+                    *t.GetTensorMutableData<float>() = 0.0f;
+                    m_impl->recurrent.push_back(std::move(t));
+                }
             }
         }
         else if (m_impl->yolo)
@@ -818,8 +846,12 @@ void SegMasker::Process(const uint8_t* bgra, int w, int h, bool mirror,
             // (pha) is read back to the CPU for compositing.
             m_impl->ratioVal = m_impl->downsampleRatio;
             const std::array<int64_t, 1> ratioShape{1};
-            Ort::Value ratioTensor = Ort::Value::CreateTensor<float>(
-                memInfo, &m_impl->ratioVal, 1, ratioShape.data(), ratioShape.size());
+            Ort::Value ratioTensor =
+                m_impl->rvmFp16
+                    ? Ort::Value::CreateTensor<Ort::Float16_t>(memInfo, &m_impl->ratioVal16, 1,
+                                                               ratioShape.data(), ratioShape.size())
+                    : Ort::Value::CreateTensor<float>(memInfo, &m_impl->ratioVal, 1,
+                                                      ratioShape.data(), ratioShape.size());
 
             auto& b = *m_impl->binding;
             b.ClearBoundInputs();
