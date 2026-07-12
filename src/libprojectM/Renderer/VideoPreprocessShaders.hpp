@@ -51,6 +51,8 @@ uniform int   u_hasPrev;       //!< 0 on the first frame (no previous frame yet)
 uniform int   u_hasBackground; //!< 0 until the background model has been seeded.
 uniform int   u_mirror;        //!< Non-zero to horizontally mirror the incoming camera frame.
 uniform int   u_outputSelect;  //!< 0 = write processed frame [rgb, alpha]; 1 = write background model.
+uniform sampler2D u_gate;      //!< Coarse app-supplied alpha weight map (see u_hasGate).
+uniform int   u_hasGate;       //!< Non-zero when the app has supplied an alpha gate.
 
 // Single output (no MRT): Apple's GL core profile rejects multi-render-target draws here with
 // GL_INVALID_OPERATION. The frame and the background model are written in two separate draws.
@@ -78,7 +80,11 @@ void main()
     // comparisons stay aligned.
     vec2 in_uv = (u_mirror != 0) ? vec2(1.0 - v_uv.x, v_uv.y) : v_uv;
     vec3 rgb  = texture(u_input, in_uv).rgb;
+    // The gate scales the app-supplied matte only (not the synthesized alpha modes): it is a
+    // property of that matte, e.g. a depth/pose weight that fades out background people. Sampled
+    // in the same (pre-mirror) space as the input, and bilinearly, which feathers its coarse grid.
     float srcA = texture(u_input, in_uv).a;
+    if (u_hasGate != 0) { srcA *= clamp(texture(u_gate, in_uv).r, 0.0, 1.0); }
     vec4 prev = texture(u_prev, v_uv);
     vec3 bg   = texture(u_bg, v_uv).rgb;
 
@@ -315,13 +321,18 @@ uniform int   u_hasPrev;         //!< 0 on the first frame (no previous frame ye
 uniform int   u_mirror;          //!< Non-zero to mirror the input sample (library-owned mirror).
 uniform float u_motionScale;     //!< Gain applied to the raw frame-diff magnitude.
 uniform float u_decay;           //!< Motion-decay persistence (0..1): higher = longer trails.
+uniform sampler2D u_gate;        //!< Coarse app-supplied alpha weight map (see u_hasGate).
+uniform int   u_hasGate;         //!< Non-zero when the app has supplied an alpha gate.
 layout(location = 0) out vec4 o_mask;
 float chebyshev(vec3 a, vec3 b) { vec3 d = abs(a - b); return max(max(d.r, d.g), d.b); }
 void main()
 {
     vec2 muv = (u_mirror != 0) ? vec2(1.0 - v_uv.x, v_uv.y) : v_uv;
     vec4 inp = texture(u_input, muv);
+    // Gate the matte here too: seg is read from the input alpha, not the processed alpha, so
+    // without this the mask buffer's seg channel would still carry the gated-out people.
     float seg = inp.a; // foreground matte, independent of the preset's video_alpha_mode
+    if (u_hasGate != 0) { seg *= clamp(texture(u_gate, muv).r, 0.0, 1.0); }
     float motion = 0.0;
     float decayed = 0.0;
     if (u_hasPrev == 1)

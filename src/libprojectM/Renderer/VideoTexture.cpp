@@ -31,6 +31,7 @@ VideoTexture::~VideoTexture()
     glDeleteTextures(2, m_bgTex);
     glDeleteTextures(2, m_morphTex);
     glDeleteTextures(2, m_stableTex);
+    if (m_gateTex) { glDeleteTextures(1, &m_gateTex); }
     if (m_fbo) { glDeleteFramebuffers(1, &m_fbo); }
     if (m_vao) { glDeleteVertexArrays(1, &m_vao); }
     if (m_vbo) { glDeleteBuffers(1, &m_vbo); }
@@ -71,6 +72,29 @@ void VideoTexture::SubmitFrame(const void* data, int srcWidth, int srcHeight, Pi
     m_pendingFrameIsGpu = false;
 }
 
+void VideoTexture::SubmitAlphaGate(const float* weights, int gridWidth, int gridHeight)
+{
+    if (weights == nullptr || gridWidth <= 0 || gridHeight <= 0)
+    {
+        return;
+    }
+
+    // Quantize to 8 bits here, on the caller's thread: the gate is a smooth 0..1 keep weight that
+    // the shader samples bilinearly, so 1/255 steps are far below what a feathered fade resolves,
+    // and R8 is filterable everywhere (R32F linear filtering is not guaranteed on GLES).
+    const size_t n = static_cast<size_t>(gridWidth) * static_cast<size_t>(gridHeight);
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_gateStaging.resize(n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const float w = (weights[i] < 0.0f) ? 0.0f : (weights[i] > 1.0f ? 1.0f : weights[i]);
+        m_gateStaging[i] = static_cast<uint8_t>(w * 255.0f + 0.5f);
+    }
+    m_gateStagingW = gridWidth;
+    m_gateStagingH = gridHeight;
+    m_gatePending = true;
+}
+
 void VideoTexture::SubmitFrameGPU()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -81,6 +105,9 @@ void VideoTexture::SubmitFrameGPU()
 void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
 {
     bool gpuFrame = false;
+    bool gatePending = false;
+    int gateW = 0;
+    int gateH = 0;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (!m_hasPendingFrame)
@@ -93,6 +120,15 @@ void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
             std::swap(m_workBuffer, m_stagingBuffer);
         }
         m_hasPendingFrame = false;
+
+        gatePending = m_gatePending;
+        if (gatePending)
+        {
+            std::swap(m_gateWork, m_gateStaging);
+            gateW = m_gateStagingW;
+            gateH = m_gateStagingH;
+            m_gatePending = false;
+        }
     }
 
     // Measure the wall-clock cadence of actual slice advances. Frames are submitted at the
@@ -119,6 +155,29 @@ void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_texWidth, m_texHeight,
                         GL_RGBA, GL_UNSIGNED_BYTE, m_workBuffer.data());
         glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    if (gatePending)
+    {
+        // Reallocate only when the grid dimensions change (they follow the capture aspect, so in
+        // practice once). GL_RED + R8 with linear filtering: the shader's bilinear fetch is what
+        // feathers the coarse grid across the full-resolution matte.
+        glBindTexture(GL_TEXTURE_2D, m_gateTex);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        if (gateW != m_gateW || gateH != m_gateH)
+        {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, gateW, gateH, 0,
+                         GL_RED, GL_UNSIGNED_BYTE, m_gateWork.data());
+            m_gateW = gateW;
+            m_gateH = gateH;
+        }
+        else
+        {
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, gateW, gateH,
+                            GL_RED, GL_UNSIGNED_BYTE, m_gateWork.data());
+        }
+        glBindTexture(GL_TEXTURE_2D, 0);
+        m_hasGate = true;
     }
 
     // Resolve the masking mode and refinement for this frame:
@@ -159,7 +218,7 @@ void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
     // Our preprocess textures have no mipmaps, so an inherited sampler makes them incomplete and
     // the draw fails with GL_INVALID_OPERATION (silent black output). Use the textures' own
     // parameters by clearing the sampler binding on every unit we touch.
-    for (int unit = 0; unit < 3; ++unit) { glBindSampler(unit, 0); }
+    for (int unit = 0; unit < 4; ++unit) { glBindSampler(unit, 0); }
 
     // --- Prior pass: compute [rgb, alpha] into prev[writeIdx], and (BackgroundSubtract only)
     // the updated background model into bg[writeIdx]. Two SINGLE-output draws rather than one
@@ -185,6 +244,9 @@ void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
     m_preprocessShader->SetUniformInt("u_hasPrev", m_hasPreviousFrame ? 1 : 0);
     m_preprocessShader->SetUniformInt("u_hasBackground", m_hasBackground ? 1 : 0);
     m_preprocessShader->SetUniformInt("u_mirror", m_mirror ? 1 : 0);
+    // GPU-submitted frames already carry a finished mask -- the app owns it, so don't gate it.
+    const int gateOn = (m_hasGate && !gpuFrame) ? 1 : 0;
+    m_preprocessShader->SetUniformInt("u_hasGate", gateOn);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_inputTex);
@@ -195,6 +257,9 @@ void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, m_bgTex[readIdx]);
     m_preprocessShader->SetUniformInt("u_bg", 2);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, m_gateTex);
+    m_preprocessShader->SetUniformInt("u_gate", 3);
 
     glBindVertexArray(m_vao);
 
@@ -409,12 +474,18 @@ void VideoTexture::RunMaskBuffer(int readIdx)
     m_maskGatherShader->SetUniformInt("u_mirror", m_mirror ? 1 : 0);
     m_maskGatherShader->SetUniformFloat("u_motionScale", 4.0f);
     m_maskGatherShader->SetUniformFloat("u_decay", 0.9f);
+    // Gate the seg channel to match the processed alpha; seg is read from the input matte, so it
+    // would otherwise still carry the people the gate removed.
+    m_maskGatherShader->SetUniformInt("u_hasGate", m_hasGate ? 1 : 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_morphTex[1], 0);
     // seg comes from the INPUT matte (app-supplied alpha), so the mask buffer is independent of the
     // preset's video_alpha_mode; rgb from the same input drives the motion diff vs. the prev frame.
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_inputTex);
     m_maskGatherShader->SetUniformInt("u_input", 0);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, m_gateTex);
+    m_maskGatherShader->SetUniformInt("u_gate", 3);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, m_prevTex[readIdx]);
     m_maskGatherShader->SetUniformInt("u_prev", 1);
@@ -559,6 +630,20 @@ void VideoTexture::CreateGpuResources()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    // Gate texture: coarse app-supplied alpha weight map (R8). Linear so the shader's fetch
+    // feathers it; 1x1 white until the app submits one, so an unsampled gate is a no-op.
+    const uint8_t gateInit = 255;
+    glGenTextures(1, &m_gateTex);
+    glBindTexture(GL_TEXTURE_2D, m_gateTex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 1, 1, 0, GL_RED, GL_UNSIGNED_BYTE, &gateInit);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    m_gateW = 1;
+    m_gateH = 1;
 
     // Input texture: the uploaded downscaled camera frame (RGBA8).
     glGenTextures(1, &m_inputTex);

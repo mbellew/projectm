@@ -108,9 +108,33 @@ public:
     /**
      * Runs segmentation on a BGRA/BGRX color frame and writes an RGBA frame
      * (RGB = the color image, A = person matte) to @p outRGBA (resized to w*h*4).
+     *
+     * NOTE: the depth gate's verdict is NOT baked into the alpha. It is left as a coarse weight
+     * grid (see GateGrid) for the GPU to multiply in, because doing it here costs a full-resolution
+     * pass per frame on the capture thread. Callers that consume the alpha on the CPU must weight
+     * it themselves with SampleGate, or they will still see the people the gate removed.
+     *
      * @param mirror Horizontally flip to a selfie-style view.
      */
     void Process(const uint8_t* bgra, int w, int h, bool mirror, std::vector<uint8_t>& outRGBA);
+
+    /** True when the last Process() produced a depth-gate weight grid. */
+    bool HasGate() const;
+
+    /**
+     * The depth gate's per-cell keep weights from the last Process(): [0,1], 1 = keep, row-major,
+     * row 0 = top of the frame, in un-mirrored camera space. Hand this to the library
+     * (projectm_video_submit_alpha_gate) to have it multiplied into the matte on the GPU.
+     * @return The grid, or nullptr (and 0 dims) if there is no gate. Valid until the next Process().
+     */
+    const float* GateGrid(int& gridW, int& gridH) const;
+
+    /**
+     * Samples the gate's keep weight at a point, for CPU consumers of the matte alpha.
+     * @param fx,fy Normalized, [0,1], fx left->right and fy BOTTOM->top (as SampleDepth).
+     * @return Weight in [0,1]; 1 (keep) when there is no gate. Bilinear, matching the GPU apply.
+     */
+    float SampleGate(float fx, float fy) const;
 
     /** Per-stage cost of the last Process() call. See SegTimings. */
     const SegTimings& LastTimings() const;

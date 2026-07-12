@@ -552,6 +552,16 @@ unsigned int projectm_video_get_input_texture(projectm_handle instance)
     return projectMInstance->VideoInputTexture();
 }
 
+void projectm_video_submit_alpha_gate(projectm_handle instance,
+                                      const float* weights,
+                                      unsigned int grid_width, unsigned int grid_height)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->VideoSubmitAlphaGate(weights,
+                                           static_cast<int>(grid_width),
+                                           static_cast<int>(grid_height));
+}
+
 void projectm_video_submit_frame_gpu(projectm_handle instance)
 {
     auto* projectMInstance = handle_to_instance(instance);

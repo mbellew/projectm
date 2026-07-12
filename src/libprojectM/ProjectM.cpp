@@ -670,6 +670,15 @@ void ProjectM::VideoSubmitFrame(const void* data, int srcWidth, int srcHeight, i
                                 static_cast<Renderer::VideoTexture::PixelFormat>(format));
 }
 
+void ProjectM::VideoSubmitAlphaGate(const float* weights, int gridWidth, int gridHeight)
+{
+    if (!m_videoTexture)
+    {
+        return;
+    }
+    m_videoTexture->SubmitAlphaGate(weights, gridWidth, gridHeight);
+}
+
 auto ProjectM::VideoInputTexture() const -> unsigned int
 {
     return m_videoTexture ? m_videoTexture->InputTextureId() : 0;

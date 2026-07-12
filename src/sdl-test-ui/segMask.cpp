@@ -254,6 +254,8 @@ struct SegMasker::Impl
     int depthMapH{0};
     std::vector<int> ccLabel;           // connected-component label per grid cell (-1 = background)
     std::vector<float> cellWeight;      // per-grid-cell keep weight (1 = keep, 0 = drop)
+    int gateW{0};                       // cellWeight grid dims; the grid is handed to the library,
+    int gateH{0};                       // which multiplies it into the matte on the GPU.
 
     SegTimings timings{}; //!< Per-stage cost of the last Process() (see SEG_MASK_PERF.md).
 
@@ -1112,6 +1114,8 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     if (w >= h) { gw = gridLong; gh = std::max(1, gridLong * h / w); }
     else        { gh = gridLong; gw = std::max(1, gridLong * w / h); }
     const int gn = gw * gh;
+    I.gateW = gw;
+    I.gateH = gh;
     I.ccLabel.assign(gn, -1);
     I.cellWeight.assign(gn, 1.0f); // background / kept default = 1 (alpha unchanged)
 
@@ -1276,16 +1280,45 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
         }
     }
 
-    // 7. Apply: scale full-res alpha by the bilinearly-sampled weight grid (feathers the cut).
-    for (int y = 0; y < h; ++y)
+    // 7. The weight grid is NOT applied here. Multiplying it into the full-resolution alpha was a
+    //    per-pixel bilinear fetch over the whole frame on the capture thread -- measured at ~6ms
+    //    per megapixel, i.e. more than the depth model itself at 1080p. The grid is tiny and the
+    //    consumer is a GPU sampler, so it is handed to the library instead (GateGrid ->
+    //    projectm_video_submit_alpha_gate) and multiplied into the matte during preprocessing, at
+    //    texture resolution. The shader's bilinear fetch feathers the cut identically.
+    //
+    //    CPU consumers of the matte that must see the gate (the alpha-weighted centroid, the
+    //    pose->touch wrist confidence) sample it directly via SampleGate.
+}
+
+bool SegMasker::HasGate() const
+{
+    return !m_impl->cellWeight.empty() && m_impl->gateW > 0 && m_impl->gateH > 0;
+}
+
+const float* SegMasker::GateGrid(int& gridW, int& gridH) const
+{
+    const Impl& I = *m_impl;
+    if (!HasGate())
     {
-        const float gy = (y + 0.5f) / h * gh - 0.5f;
-        for (int x = 0; x < w; ++x)
-        {
-            const float gx = (x + 0.5f) / w * gw - 0.5f;
-            const float wgt = std::clamp(SampleMatte(I.cellWeight.data(), gw, gh, gx, gy), 0.0f, 1.0f);
-            const size_t di = (static_cast<size_t>(y) * w + x) * 4;
-            outRGBA[di + 3] = static_cast<uint8_t>(outRGBA[di + 3] * wgt + 0.5f);
-        }
+        gridW = 0;
+        gridH = 0;
+        return nullptr;
     }
+    gridW = I.gateW;
+    gridH = I.gateH;
+    return I.cellWeight.data();
+}
+
+float SegMasker::SampleGate(float fx, float fy) const
+{
+    const Impl& I = *m_impl;
+    if (!HasGate())
+    {
+        return 1.0f; // no gate -> keep everything
+    }
+    // fy is bottom-up (as in SampleDepth); the grid's row 0 is the top of the frame.
+    const float gx = std::clamp(fx, 0.0f, 1.0f) * static_cast<float>(I.gateW) - 0.5f;
+    const float gy = std::clamp(1.0f - fy, 0.0f, 1.0f) * static_cast<float>(I.gateH) - 0.5f;
+    return std::clamp(SampleMatte(I.cellWeight.data(), I.gateW, I.gateH, gx, gy), 0.0f, 1.0f);
 }

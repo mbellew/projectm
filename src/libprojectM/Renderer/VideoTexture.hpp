@@ -87,6 +87,22 @@ public:
     void SubmitFrame(const void* data, int srcWidth, int srcHeight, PixelFormat format);
 
     /**
+     * @brief Submits a coarse alpha weight map ("gate") multiplied into the app-supplied matte.
+     *
+     * The application may derive a foreground matte and, separately, a low-resolution weight map
+     * saying how much of that matte to keep (e.g. a depth or pose gate that fades out background
+     * people). Applying it here rather than on the CPU keeps the full-resolution multiply off the
+     * capture thread; the grid is uploaded as a small texture and sampled bilinearly, which
+     * feathers it exactly as a CPU bilinear apply would.
+     *
+     * Weights are in [0,1] (1 = keep), row-major, in the same un-mirrored space as the submitted
+     * frame. The map persists until replaced, so it must be resubmitted whenever it changes.
+     * Safe to call from any thread. Applies to SubmitFrame; GPU-submitted frames (SubmitFrameGPU)
+     * already carry a finished mask and are not gated.
+     */
+    void SubmitAlphaGate(const float* weights, int gridWidth, int gridHeight);
+
+    /**
      * @brief GL texture name of the RGBA8 input surface, at the configured texture size.
      *
      * For applications that preprocess frames on the GPU (e.g. a depth camera that
@@ -214,6 +230,16 @@ private:
     std::unique_ptr<Shader> m_featherShader;  //!< B4: composite + feather.
     std::unique_ptr<Shader> m_maskGatherShader; //!< Gathers seg/motion into the mask buffer.
     std::unique_ptr<Shader> m_maskBlurShader;   //!< Blurs the seg channel into the mask buffer's G.
+    std::vector<uint8_t> m_gateStaging; //!< Pending gate weights, quantized to 8 bits (see SubmitAlphaGate).
+    std::vector<uint8_t> m_gateWork;    //!< Gate weights being uploaded (swapped out of staging).
+    int m_gateStagingW{0};
+    int m_gateStagingH{0};
+    bool m_gatePending{false};   //!< A new gate map is staged for upload.
+    bool m_hasGate{false};       //!< A gate map has been uploaded and is live.
+    int m_gateW{0};              //!< Dimensions currently allocated in m_gateTex.
+    int m_gateH{0};
+
+    uint32_t m_gateTex{0};       //!< 2D R8: coarse alpha weight map (1 = keep), bilinearly sampled.
     uint32_t m_inputTex{0};      //!< 2D RGBA8: the uploaded downscaled camera frame.
     uint32_t m_prevTex[2]{0, 0}; //!< 2D RGBA16F ping-pong: processed [rawRGB, alpha].
     uint32_t m_bgTex[2]{0, 0};   //!< 2D RGBA16F ping-pong: background model.

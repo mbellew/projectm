@@ -306,6 +306,13 @@ public:
     void VideoSubmitFrame(const void* data, int srcWidth, int srcHeight, int format);
 
     /**
+     * @brief Submits a coarse alpha weight map multiplied into the app-supplied matte.
+     * Weights in [0,1] (1 = keep), row-major, un-mirrored frame space. Persists until replaced.
+     * @see Renderer::VideoTexture::SubmitAlphaGate.
+     */
+    void VideoSubmitAlphaGate(const float* weights, int gridWidth, int gridHeight);
+
+    /**
      * @brief GL texture name of the RGBA8 input surface, sized to the configured texture.
      * For applications that preprocess frames on the GPU. Returns 0 if not configured.
      * GL thread only. @see VideoSubmitFrameGPU.

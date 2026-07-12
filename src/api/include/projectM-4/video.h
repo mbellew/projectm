@@ -77,6 +77,33 @@ PROJECTM_EXPORT void projectm_video_submit_frame(projectm_handle instance,
                                                  projectm_video_format format);
 
 /**
+ * @brief Submits a coarse alpha weight map ("gate") multiplied into the app-supplied matte.
+ *
+ * An application that derives a foreground matte may separately decide how much of that matte to
+ * keep per region -- e.g. a depth or pose gate that fades out background people. Submitting the
+ * decision as a low-resolution grid lets projectM apply it during GPU preprocessing, instead of
+ * the application multiplying it into every pixel of every frame on the capture thread. The grid
+ * is sampled bilinearly, which feathers it exactly as a CPU bilinear apply would.
+ *
+ * Weights are in [0,1] (1 = keep the matte unchanged, 0 = remove it), row-major, and in the same
+ * un-mirrored space as the submitted frame. The map persists until replaced, so resubmit it
+ * whenever it changes. Safe to call from any thread. Applies to frames submitted with
+ * projectm_video_submit_frame(); frames submitted with projectm_video_submit_frame_gpu() already
+ * carry a finished mask and are not gated. If projectm_video_configure() has not been called,
+ * this is a no-op.
+ *
+ * @param instance The projectM instance handle.
+ * @param weights Pointer to grid_width * grid_height floats in [0,1], row-major.
+ * @param grid_width Grid width in cells.
+ * @param grid_height Grid height in cells.
+ * @since 4.2.0
+ */
+PROJECTM_EXPORT void projectm_video_submit_alpha_gate(projectm_handle instance,
+                                                      const float* weights,
+                                                      unsigned int grid_width,
+                                                      unsigned int grid_height);
+
+/**
  * @brief Returns the GL texture name of the RGBA8 input surface for GPU preprocessing.
  *
  * Applications that preprocess frames on the GPU (e.g. a depth camera compositing a real

@@ -349,6 +349,17 @@ void projectMSDL::startVideoCapture()
                                                     static_cast<unsigned int>(width),
                                                     static_cast<unsigned int>(height),
                                                     PROJECTM_VIDEO_FORMAT_RGBA);
+
+                        // The depth gate's verdict rides along as a small grid; the library
+                        // multiplies it into the matte on the GPU, at texture resolution, instead
+                        // of us doing a full-res pass per frame here (SEG_MASK_PERF.md).
+                        int gateW = 0, gateH = 0;
+                        if (const float* gate = masker->GateGrid(gateW, gateH); gate != nullptr)
+                        {
+                            projectm_video_submit_alpha_gate(handle, gate,
+                                                             static_cast<unsigned int>(gateW),
+                                                             static_cast<unsigned int>(gateH));
+                        }
                         const auto tSubmitDone = std::chrono::steady_clock::now();
 
                         // Run body-pose first (if enabled): its torso keypoints give a better
@@ -383,17 +394,33 @@ void projectMSDL::startVideoCapture()
                         // Alpha-weighted centroid of the matte (the fallback "center") -> seg_*.
                         // Row 0 is the top of the frame; flip Y so cy matches preset per-pixel
                         // y (bottom-up). The library applies mirror and all smoothing.
+                        // The gate is no longer baked into the alpha (it is applied on the GPU), so
+                        // weight by it here -- without this the centroid drifts toward the
+                        // background people the gate exists to remove.
+                        //
+                        // Sampled on a stride: a centroid is an integral, so every 4th pixel in each
+                        // axis gives the same answer to well under a pixel while costing 1/16th as
+                        // much -- which is what makes a per-sample bilinear gate fetch affordable at
+                        // all (doing it per pixel is exactly the full-res pass we just removed).
                         const auto tCentroidStart = std::chrono::steady_clock::now();
                         const uint8_t* px = outBuf->data();
+                        const bool gated = masker->HasGate();
+                        constexpr int kStride = 4;
                         double sumA = 0.0, sumXA = 0.0, sumYA = 0.0;
                         const double invW = (width > 1) ? 1.0 / (width - 1) : 0.0;
                         const double invH = (height > 1) ? 1.0 / (height - 1) : 0.0;
-                        for (int row = 0; row < height; ++row)
+                        int samples = 0;
+                        for (int row = 0; row < height; row += kStride)
                         {
                             const double yv = 1.0 - row * invH; // bottom-up
-                            for (int col = 0; col < width; ++col)
+                            for (int col = 0; col < width; col += kStride, ++samples)
                             {
-                                const double a = px[(static_cast<size_t>(row) * width + col) * 4 + 3] / 255.0;
+                                double a = px[(static_cast<size_t>(row) * width + col) * 4 + 3] / 255.0;
+                                if (gated)
+                                {
+                                    a *= masker->SampleGate(static_cast<float>(col * invW),
+                                                            static_cast<float>(yv));
+                                }
                                 sumA += a;
                                 sumXA += a * (col * invW);
                                 sumYA += a * yv;
@@ -404,7 +431,7 @@ void projectMSDL::startVideoCapture()
                         {
                             cx = static_cast<float>(sumXA / sumA);
                             cy = static_cast<float>(sumYA / sumA);
-                            coverage = static_cast<float>(sumA / (static_cast<double>(width) * height));
+                            coverage = static_cast<float>(sumA / std::max(1, samples));
                         }
                         const double centroidMs = std::chrono::duration<double, std::milli>(
                                                       std::chrono::steady_clock::now() - tCentroidStart)
@@ -519,7 +546,11 @@ void projectMSDL::startVideoCapture()
                                 // nx left->right, ny bottom-up; RGBA row 0 is the top of the frame.
                                 const int col = std::clamp(static_cast<int>(nx * (width - 1) + 0.5f), 0, width - 1);
                                 const int row = std::clamp(static_cast<int>((1.0f - ny) * (height - 1) + 0.5f), 0, height - 1);
-                                return rgba[(static_cast<size_t>(row) * width + col) * 4 + 3] / 255.0f;
+                                const float a = rgba[(static_cast<size_t>(row) * width + col) * 4 + 3] / 255.0f;
+                                // The gate is applied on the GPU, not baked into this alpha -- weight
+                                // it here, or a gated-out spectator's wrist keeps full confidence and
+                                // can still drive the touch bridge.
+                                return a * masker->SampleGate(nx, ny);
                             };
                             // COCO-17 has no finger keypoints (stops at the wrist), so estimate the
                             // hand/fingertip by extending the forearm past the wrist:
