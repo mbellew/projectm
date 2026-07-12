@@ -35,6 +35,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -203,12 +204,16 @@ std::vector<CaptureFormat> enumerateFormats(int fd)
 // True if this is an uncompressed layout (cheaper to decode than MJPEG); a tie-breaker.
 bool isUncompressed(uint32_t f) { return f != V4L2_PIX_FMT_MJPEG; }
 
-// Capture resolution cap. The frame is downscaled into a ~852x480 history texture and a 512px
-// seg model, so anything past ~1080p buys no quality -- it only adds MJPEG-decode and CPU
-// downscale latency on the capture thread (a 4K webcam otherwise wins the "max resolution" tie
-// and makes the feed laggy). Prefer the largest mode at or under this; only exceed it if the
-// camera offers nothing smaller.
-constexpr long kMaxCaptureArea = 1920L * 1080L;
+// Capture resolution cap. Everything downstream is fixed-size and small: the frame lands in a
+// ~852x480 history texture (short side pinned at 480 regardless of display -- see setup.cpp) and
+// a <=512px seg model. 720p already exceeds both in every dimension, so capturing more cannot
+// add quality; it only adds MJPEG-decode plus full-res CPU passes (rgb / composite / harden /
+// centroid, and the depth gate's connected components) on the single capture thread. Measured on
+// the FOCUS 210: 1080p costs ~60ms/frame vs ~32ms at 640x480, against a 33ms camera interval --
+// i.e. permanently a frame behind. This cap is NOT a limit on the history texture; the two are
+// independent. Prefer the largest mode at or under it; only exceed it if the camera offers
+// nothing smaller.
+constexpr long kMaxCaptureArea = 1280L * 720L;
 
 // Choose the best mode for our policy: FPS-first (hit targetFps as a hard floor), then the
 // aspect closest to the display, then the highest resolution at or under kMaxCaptureArea, then
@@ -277,6 +282,9 @@ struct VideoCapture::Impl
     int height{0};
     uint32_t pixelFormat{0};
     std::vector<uint8_t> bgrx; // contiguous BGRX output scratch
+
+    // $PROJECTM_VIDEO_DROP_DEBUG=1 -> log how many stale frames each drain discards.
+    const bool dropDebug{std::getenv("PROJECTM_VIDEO_DROP_DEBUG") != nullptr};
 
     void unmap()
     {
@@ -508,13 +516,40 @@ bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>&
                 continue; // timeout or EINTR/error -> re-check running flag
             }
 
+            // Drain to the newest queued frame. The decode + callback below (seg, pose, depth)
+            // costs more than the camera's frame interval, so buffers pile up in the driver's
+            // queue. Dequeuing one per iteration would work through them FIFO and leave the
+            // mask permanently up to REQBUFS-count frames behind the performer. Requeue each
+            // stale buffer as soon as a newer one appears and decode only the last.
             v4l2_buffer buf{};
-            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            buf.memory = V4L2_MEMORY_MMAP;
-            if (xioctl(impl->fd, VIDIOC_DQBUF, &buf) == -1)
+            bool have = false;
+            bool fatal = false;
+            int stale = 0;
+            while (true)
             {
-                if (errno == EAGAIN) { continue; }
-                break; // unrecoverable
+                v4l2_buffer next{};
+                next.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                next.memory = V4L2_MEMORY_MMAP;
+                if (xioctl(impl->fd, VIDIOC_DQBUF, &next) == -1)
+                {
+                    if (errno != EAGAIN) { fatal = true; }
+                    break; // EAGAIN -> queue drained; `buf` (if any) is the newest frame
+                }
+                if (have && xioctl(impl->fd, VIDIOC_QBUF, &buf) == -1)
+                {
+                    fatal = true;
+                    break;
+                }
+                stale += have ? 1 : 0;
+                buf = next;
+                have = true;
+            }
+            if (fatal) { break; }   // unrecoverable
+            if (!have) { continue; } // poll() raced us; nothing ready
+
+            if (impl->dropDebug && stale > 0)
+            {
+                std::fprintf(stderr, "[VideoCapture] dropped %d stale frame(s)\n", stale);
             }
 
             const uint8_t* src = static_cast<const uint8_t*>(impl->buffers[buf.index].start);
