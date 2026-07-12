@@ -359,10 +359,10 @@ Verified: a forced-constant gate scales GPU alpha exactly linearly (1.0 -> mean 
 
 ## Where the frame stands
 
-| | original | + drain/cap | + GPU gate | + 1:1 submit | (+ depth 196, not applied) |
-|---|---|---|---|---|---|
-| 4:3 projector | 32.0 | 32.0 | 29.5 | **26.8** | 22.8 |
-| 16:9 TV | 60.2 | 39.7 | 34.0 | **33.5** | 30.5 |
+| | original | + drain/cap | + GPU gate | + 1:1 submit | + fp16 RVM | (+ depth 196, not applied) |
+|---|---|---|---|---|---|---|
+| 4:3 projector | 32.0 | 32.0 | 29.5 | 26.8 | **25.1** | 21.1 |
+| 16:9 TV | 60.2 | 39.7 | 34.0 | 33.5 | **31.9** | 28.9 |
 
 The 16:9 case went from ~half the camera rate to roughly keeping pace. It is still marginally over
 the 33 ms interval; depth-input size (below) is what would close that.
@@ -481,6 +481,35 @@ Lesson: the mem->vmem wins so far (full-res composite, the 1:1 box filter) were 
 one is about **synchronization**. Don't assume a copy is expensive because it is a copy — 30 minutes of
 static analysis said so before a day was spent on CUDA Graphs expecting a payoff.
 
+## Finding I: FP16 RVM works — but it is worth ~1.6 ms, not the ~4 ms predicted
+
+Done (`de7acd53`, `scripts/export_rvm_fp16.py`). **seg inference 10.3 -> 8.7 ms; model 14.6 -> 7.3 MB;
+matte unchanged; FP32 path unmodified.** Projector total: **26.8 -> 25.1 ms.**
+
+That is ~16% off inference, not the ~2x the bandwidth argument suggested. The likely reason: RVM is
+MobileNetV3, i.e. mostly **depthwise** convolutions, which are not GEMMs — they get little from tensor
+cores, and cuDNN's fp16 depthwise kernels in NCHW layout are not much better than fp32. Tensor cores
+want NHWC. If this is pushed further, the next lever is ORT's `prefer_nhwc` CUDA provider option, not
+more precision reduction.
+
+Two non-obvious traps, both now encoded in the export script:
+
+1. **`keep_io_types=True` produces a model ORT refuses to load.** RVM's recurrent tensors (r1o..r4o)
+   are graph outputs *and* internal tensors — each ConvGRU feeds its new hidden state forward within
+   the same frame. Casting them to fp32 for the boundary poisons their internal consumers:
+   `Type Error: Type parameter (T) of Optype (Concat) bound to different types ... (Concat_188)`.
+2. **src/pha must stay fp32; the recurrent state must not.** src/pha are the only tensors the CPU
+   touches, and converting src on the CPU would mean 786k float->half conversions per frame — more
+   than the whole fp16 win. One GPU Cast at each boundary is far cheaper. The recurrent state and
+   downsample_ratio never touch the CPU, so they go native fp16: no per-frame casts, half the state
+   bandwidth. Leaving casts on the recurrent *inputs* also trips an ORT buffer-reuse bug, because the
+   state changes shape between frame 1's 1x1x1x1 zeros and frame 2's real shapes
+   (`Shape mismatch attempting to re-use buffer`).
+
+`SegMasker` detects the export from r1i's declared type and binds the zero state / ratio as half.
+**Keep the FP32 model for non-CUDA machines**: ORT's CPU EP has poor fp16 kernels, and CoreML computes
+in fp16 on the ANE regardless of the file's dtype. This is a CUDA-path optimization, not a universal one.
+
 ## The headroom menu (from 29.5 ms on the projector)
 
 Budget today: RVM Run 8.6 | depth 7.3 | pose 6.3 | RVM preprocess 2.8 | composite 2.1 | submit 2.1 |
@@ -488,7 +517,8 @@ rgb+harden+centroid 0.9. **Three models are 22 of the 29.5 ms, and they run stri
 thread.** 40 fps of capacity = 25 ms (cut 4.5); 50 fps = 20 ms (cut 9.5).
 
 Costs nothing visible:
-- **FP16 RVM export** (~-4 ms). RVM is FP16-safe; the 5060's tensor cores are idle. Offline export.
+- ~~FP16 RVM export~~ **DONE** (`de7acd53`, -1.6 ms; less than hoped -- see Finding I). Next lever on
+  inference is ORT's `prefer_nhwc`, not more precision reduction.
 - ~~1:1 submit fast path~~ **DONE** (`841f94a5`, -2.0 ms). **Composite at texture res** is the rest of
   Finding G and is still open (~-2 ms projector, ~-7 ms @720p).
 - **Run the three models concurrently** (potentially -8 to -10 ms) — the only lever that reaches 50 fps
@@ -512,9 +542,9 @@ Cheap route to ~18 ms exists (Q2 + depth 196 + pose cadence) but spends matte cr
 2. **Composite at texture resolution** (Finding G; the 1:1 `ConvertAndDownscale` fast path is done). No
    quality cost; the gate plumbing (`projectm_video_submit_alpha_gate`) is the same road if it goes to
    the GPU.
-3. **FP16 RVM export** (Finding F). Still the best lever on the 8.6 ms Run — for **bandwidth** reasons
-   (depthwise convs at 512x512 stream large activations), not copies. Finding H ruled the copies out.
-4. **Profile the 8.6 ms Run**, then decide on running the three models concurrently. If CUDA Graphs are
+3. ~~FP16 RVM export~~ **DONE** (Finding I): -1.6 ms. Depthwise convs get little from tensor cores;
+   try ORT's `prefer_nhwc` CUDA provider option next if inference is pushed further.
+4. **Profile the remaining ~6 ms Run**, then decide on running the three models concurrently. If CUDA Graphs are
    attempted, note Finding H: the Memcpy blocker is removable offline, but the recurrent-state
    IoBinding swap (unstable device addresses) is the harder one.
 5. **Cadence-decouple pose** (~6 ms). Note the depth gate's own cadence is a *worse* idea than it looks:
