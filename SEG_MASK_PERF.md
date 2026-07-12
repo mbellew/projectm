@@ -359,10 +359,10 @@ Verified: a forced-constant gate scales GPU alpha exactly linearly (1.0 -> mean 
 
 ## Where the frame stands
 
-| | original | + drain/cap | + GPU gate | (+ depth 196, not applied) |
-|---|---|---|---|---|
-| 4:3 projector | 32.0 | 32.0 | **29.5** | 25.5 |
-| 16:9 TV | 60.2 | 39.7 | **34.0** | 30.8 |
+| | original | + drain/cap | + GPU gate | + 1:1 submit | (+ depth 196, not applied) |
+|---|---|---|---|---|---|
+| 4:3 projector | 32.0 | 32.0 | 29.5 | **26.8** | 22.8 |
+| 16:9 TV | 60.2 | 39.7 | 34.0 | **33.5** | 30.5 |
 
 The 16:9 case went from ~half the camera rate to roughly keeping pace. It is still marginally over
 the 33 ms interval; depth-input size (below) is what would close that.
@@ -418,11 +418,15 @@ A 1024x768 (4:3) display gives `videoTexW = 480 * 1024/768 = 640`, so the histor
 pass with no resampling at all. This is a big part of why the projector numbers came in so far under
 the original review's estimate.
 
-But the resampler still pays as if it were resampling: at 1:1 it runs the general box-filter loop,
+But the resampler still paid as if it were resampling: at 1:1 it ran the general box-filter loop,
 computing `sx0/sx1/sy0/sy1` with four integer divides per destination pixel, switching on pixel
-format, accumulating four sums and dividing by a `count` that is always 1. That is the 2.1 ms
-`submit`. **A 1:1 / integer-ratio fast path would drop it to ~0.3-0.5 ms** — free, no quality cost,
-and it lives in the library, so any app whose camera matches its texture benefits.
+format *inside* the sample loop, accumulating four sums and dividing by a `count` that is always 1.
+
+**FIXED (`841f94a5`): `submit` 2.1 ms -> 0.1 ms** — a 1:1 fast path (plain format conversion, format
+switch hoisted out of the loop, straight `memcpy` for RGBA). 21x, no quality cost, and it is in the
+library, so any app whose camera matches its texture benefits. The 16:9 path is untouched (2.7 ms) --
+it still needs a real downscale. Projector total: **29.5 -> 26.8 ms**. Verified: both the RGBA (seg)
+and BGRX (raw capture) fast paths render correct colors -- a channel swap here would be silent.
 
 Matching the sizes on a 16:9 display is not an option and not desirable:
 - the texture would be 853x480; the camera's 16:9 modes are 640x360 (**below** the texture -- it would
@@ -450,7 +454,8 @@ thread.** 40 fps of capacity = 25 ms (cut 4.5); 50 fps = 20 ms (cut 9.5).
 
 Costs nothing visible:
 - **FP16 RVM export** (~-4 ms). RVM is FP16-safe; the 5060's tensor cores are idle. Offline export.
-- **Composite at texture res + 1:1 submit fast path** (~-2 ms projector, ~-7 ms @720p). Findings G.
+- ~~1:1 submit fast path~~ **DONE** (`841f94a5`, -2.0 ms). **Composite at texture res** is the rest of
+  Finding G and is still open (~-2 ms projector, ~-7 ms @720p).
 - **Run the three models concurrently** (potentially -8 to -10 ms) — the only lever that reaches 50 fps
   with no quality given up, *if* Finding F's 8.6 ms is GPU wait. Profile first.
 
@@ -469,8 +474,9 @@ Cheap route to ~18 ms exists (Q2 + depth 196 + pose cadence) but spends matte cr
 
 1. **Pose-informed alpha gate + depth input size**, together (above). Depth stays — it looks effective
    and pose/depth are likely complementary, not either/or.
-2. **Composite at texture resolution** + the 1:1 `ConvertAndDownscale` fast path (Finding G). No quality
-   cost; the gate plumbing (`projectm_video_submit_alpha_gate`) is the same road if it goes to the GPU.
+2. **Composite at texture resolution** (Finding G; the 1:1 `ConvertAndDownscale` fast path is done). No
+   quality cost; the gate plumbing (`projectm_video_submit_alpha_gate`) is the same road if it goes to
+   the GPU.
 3. **FP16 RVM export** (Finding F).
 4. **Profile the 8.6 ms Run**, then decide on running the three models concurrently.
 5. **Cadence-decouple pose** (~6 ms). Note the depth gate's own cadence is a *worse* idea than it looks:
