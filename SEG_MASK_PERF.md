@@ -387,18 +387,95 @@ the gate is for*, which is entangled with the parked idea of **using pose to inf
 (pose boxes give per-person identity nearly free, and we already pay for YOLO-pose every frame). Decide
 the two together rather than tuning a number that a pose-informed gate may make moot.
 
+## Finding E: 60 fps is not reachable — the camera caps at 30
+
+The WyreStorm FOCUS 210 offers **no mode above 30 fps at any resolution** (30/15/10 only; verified with
+`v4l2-ctl --list-formats-ext`). So a 60 fps mask is impossible on this hardware no matter how fast the
+pipeline gets, and "run at 60, target 30" was never available. Compute headroom buys two things
+instead: resilience (a heavy preset or a thermal dip stops meaning dropped frames) and **latency** —
+every ms off the callback is a ms less lag between the performer moving and the mask reacting.
+Genuinely fresher masks need a 60 fps camera; that is a purchase decision, not a code one.
+
+## Finding F: half of "seg inference" is CPU preprocessing
+
+`timings.inferMs` spans preprocess **and** the ONNX Run together, which hid the split. Measured:
+
+| Seg Quality | CPU preprocess (`RgbToChw`) | ONNX Run + matte readback |
+|---|---|---|
+| 3 (512x512) | 2.8 ms | **8.6 ms** |
+| 2 (384x384) | 1.6 ms | 4.3 ms |
+
+An 8.6 ms Run for RVM-MobileNetV3 on a 5060 is implausibly slow for the arithmetic involved — that
+smells like copy/launch overhead, not compute. Relevant to two decisions: FP16 attacks the 8.6 ms
+half (and is therefore worth *more* than the original doc credited), and any "parallelize the models"
+design depends on that time being GPU wait rather than CPU-side ORT overhead. **Profile before
+committing to a threading design** — if it's ORT CPU overhead it will not overlap at all.
+
+## Finding G: on the projector, capture and texture sizes ALREADY match — and the resampler doesn't know
+
+A 1024x768 (4:3) display gives `videoTexW = 480 * 1024/768 = 640`, so the history texture is
+**640x480** — exactly the negotiated capture size. `VideoTexture::ConvertAndDownscale` is doing a 1:1
+pass with no resampling at all. This is a big part of why the projector numbers came in so far under
+the original review's estimate.
+
+But the resampler still pays as if it were resampling: at 1:1 it runs the general box-filter loop,
+computing `sx0/sx1/sy0/sy1` with four integer divides per destination pixel, switching on pixel
+format, accumulating four sums and dividing by a `count` that is always 1. That is the 2.1 ms
+`submit`. **A 1:1 / integer-ratio fast path would drop it to ~0.3-0.5 ms** — free, no quality cost,
+and it lives in the library, so any app whose camera matches its texture benefits.
+
+Matching the sizes on a 16:9 display is not an option and not desirable:
+- the texture would be 853x480; the camera's 16:9 modes are 640x360 (**below** the texture -- it would
+  upscale and lose real detail) and 1280x720. There is no 853x480 mode.
+- growing the texture to match the camera instead runs into the history ring: it is **120 slices**, so
+  853x480 is already ~196 MB of VRAM and 1280x720 would be ~442 MB. The texture is small on purpose.
+
+**The fix is not matching sizes — it is compositing at texture resolution.** Today: composite the matte
+into a full-capture-res RGBA frame (6.2 ms @720p), harden it (1.1), then box-filter the whole thing
+down to 853x480 (2.7) -- discarding the full-res image just built. The composite already samples the
+matte bilinearly per pixel; it can sample the RGB *and* the matte straight into a **texture-resolution**
+buffer in one pass and submit that with no downscale step. ~10 ms -> ~3 ms at 720p; ~4.6 -> ~2.5 on the
+projector.
+
+The trap to avoid: do **not** downscale the camera frame early to texture resolution. The models want
+*more* pixels than the texture (seg 512, pose 640; the texture's short side is 480), so they would be
+reading upsampled pixels. Keep building the full-res RGB (0.8 ms) and let the models sample it as they
+do now — just stop materializing a full-res *composited* frame whose only purpose is to be shrunk.
+
+## The headroom menu (from 29.5 ms on the projector)
+
+Budget today: RVM Run 8.6 | depth 7.3 | pose 6.3 | RVM preprocess 2.8 | composite 2.1 | submit 2.1 |
+rgb+harden+centroid 0.9. **Three models are 22 of the 29.5 ms, and they run strictly serially on one
+thread.** 40 fps of capacity = 25 ms (cut 4.5); 50 fps = 20 ms (cut 9.5).
+
+Costs nothing visible:
+- **FP16 RVM export** (~-4 ms). RVM is FP16-safe; the 5060's tensor cores are idle. Offline export.
+- **Composite at texture res + 1:1 submit fast path** (~-2 ms projector, ~-7 ms @720p). Findings G.
+- **Run the three models concurrently** (potentially -8 to -10 ms) — the only lever that reaches 50 fps
+  with no quality given up, *if* Finding F's 8.6 ms is GPU wait. Profile first.
+
+Costs something real:
+- **Seg Quality 3 -> 2** (-4.4 ms): gives up matte crispness. Note FP16 @ Q3 lands near FP32 @ Q2 while
+  keeping the sharper matte — prefer FP16 if it works.
+- **Depth 392 -> 196** (-4.0 ms): gives up depth ranking fidelity (untested vs a spectator).
+- **Pose every 2nd frame** (-3.1 ms): gives up 15 Hz keypoints. It drives the painting preset — hold
+  this back longest.
+
+Recommended package to ~40 fps giving up nothing visible: **FP16 + composite-at-texture-res -> ~23.5 ms.**
+Cheap route to ~18 ms exists (Q2 + depth 196 + pose cadence) but spends matte crispness, depth fidelity
+*and* pose rate — three of the four things the feature exists to do. Don't.
+
 ## Re-ranked plan
 
 1. **Pose-informed alpha gate + depth input size**, together (above). Depth stays — it looks effective
    and pose/depth are likely complementary, not either/or.
-2. **Cadence-decouple pose** (~6 ms). Note the depth gate's own cadence is now a *worse* idea than it
-   looks: the keep mask is ANDed into the subject's own alpha, so a stale grid clips a fast-moving
-   limb (~130 ms of staleness moves a hand well past the 1-cell grow margin). If cadence is used,
-   dilate `grow` with staleness or union the grid over recent frames.
-3. **Fuse composite + harden** (6.2 + 1.1 ms at 720p): three full-res passes became two; they could be
-   one loop (`a = harden(sampleMatte(...))`) — or move to the GPU behind `SubmitFrameGPU` now that the
-   gate plumbing exists.
-4. **FP16 RVM export** — inference (10.3 ms) is now the single largest item, so this is worth *more*
-   than the original doc credited, not less.
-5. **libjpeg-turbo** — only on a 16:9 display, where the camera hands us MJPEG (its YUYV modes top out
-   at 640x480) and the stb_image decode sits on the capture thread, outside the numbers above.
+2. **Composite at texture resolution** + the 1:1 `ConvertAndDownscale` fast path (Finding G). No quality
+   cost; the gate plumbing (`projectm_video_submit_alpha_gate`) is the same road if it goes to the GPU.
+3. **FP16 RVM export** (Finding F).
+4. **Profile the 8.6 ms Run**, then decide on running the three models concurrently.
+5. **Cadence-decouple pose** (~6 ms). Note the depth gate's own cadence is a *worse* idea than it looks:
+   the keep mask is ANDed into the subject's own alpha, so a stale grid clips a fast-moving limb
+   (~130 ms of staleness moves a hand well past the 1-cell grow margin). If cadence is used, dilate
+   `grow` with staleness or union the grid over recent frames.
+6. **libjpeg-turbo** — only on a 16:9 display, where the camera hands us MJPEG (its YUYV modes top out
+   at 640x480) and the stb_image decode sits on the capture thread, outside every number above.
