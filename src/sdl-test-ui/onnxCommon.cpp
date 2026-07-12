@@ -96,6 +96,23 @@ Ort::SessionOptions MakeSessionOptions(const std::string& modelPath, const EpCon
     Ort::SessionOptions options;
     options.SetIntraOpNumThreads(2);
     options.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+
+    // $PROJECTM_ONNX_DUMP=<dir>: write each model's POST-optimization graph there and log ORT's
+    // per-node execution-provider placement. ORT decides placement when it builds the session, so
+    // this is a static analysis -- it needs no inference run. Any Memcpy node ORT inserts is a
+    // host<->device round trip in the middle of the graph: it serializes the pipeline and (per
+    // ORT's own warning) blocks CUDA Graph capture.
+    static std::string dumpPath; // ORT copies this, but keep it alive regardless
+    if (const char* dumpDir = std::getenv("PROJECTM_ONNX_DUMP"); dumpDir != nullptr && dumpDir[0] != '\0')
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(dumpDir, ec);
+        dumpPath = (std::filesystem::path(dumpDir) /
+                    (std::filesystem::path(modelPath).stem().string() + ".optimized.onnx"))
+                       .string();
+        options.SetOptimizedModelFilePath(dumpPath.c_str());
+        options.SetLogSeverityLevel(0); // VERBOSE: emits the node-placement table
+    }
 #ifdef __APPLE__
     // CoreML execution provider (ANE/GPU) is macOS-only.
     if (EnvInt(cfg.coremlEnv, 1) != 0)
