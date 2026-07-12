@@ -14,7 +14,7 @@ CustomShape::CustomShape(PresetState& presetState)
     : m_outlineMesh(Renderer::VertexBufferUsage::StreamDraw)
     , m_fillMesh(Renderer::VertexBufferUsage::StreamDraw, true, false)
     , m_presetState(presetState)
-    , m_perFrameContext(presetState.globalMemory, &presetState.globalRegisters, &presetState.palette)
+    , m_perFrameContext(presetState.globalMemory, &presetState.globalRegisters, &presetState.palette, &presetState.renderContext.pose)
 {
     m_outlineMesh.SetVertexCount(100);
     m_outlineMesh.SetRenderPrimitiveType(Renderer::Mesh::PrimitiveType::LineLoop);

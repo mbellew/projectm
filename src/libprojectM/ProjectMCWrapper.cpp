@@ -10,6 +10,7 @@
 #include <Renderer/Platform/GLResolver.hpp>
 
 #include <projectM-4/parameters.h>
+#include <projectM-4/pose.h>
 #include <projectM-4/render_opengl.h>
 #include <projectM-4/video.h>
 
@@ -585,6 +586,16 @@ void projectm_video_set_seg_centroid(projectm_handle instance, float cx, float c
 {
     auto* projectMInstance = handle_to_instance(instance);
     projectMInstance->VideoSetSegCentroid(cx, cy, coverage);
+}
+
+void projectm_pose_set(projectm_handle instance, const projectm_pose_joint* joints, size_t count)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    // projectm_pose_joint is exactly {float x, y, z, confidence} -- a flat 4-float record, which is
+    // what SetPose consumes. Keeps the C++ surface free of the C struct.
+    static_assert(sizeof(projectm_pose_joint) == 4 * sizeof(float),
+                  "projectm_pose_joint must be a packed 4-float record");
+    projectMInstance->SetPose(reinterpret_cast<const float*>(joints), count);
 }
 
 uint32_t projectm_sprite_create(projectm_handle instance, const char* type, const char* code)

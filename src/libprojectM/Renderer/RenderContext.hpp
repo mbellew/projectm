@@ -16,6 +16,74 @@ class ShaderCache;
 class TextureManager;
 class VideoTexture;
 
+//! Joint indices. MUST match projectm_pose_joint_index in <projectM-4/pose.h>; these are the values
+//! preset code sees as the ALL_CAPS constants (NOSE, R_WRIST, HEART, ...). See POSE_API.md.
+enum PoseJoint : int
+{
+    PoseJointNose = 0,
+    PoseJointLEye = 1,
+    PoseJointREye = 2,
+    PoseJointLEar = 3,
+    PoseJointREar = 4,
+    PoseJointLShoulder = 5,
+    PoseJointRShoulder = 6,
+    PoseJointLElbow = 7,
+    PoseJointRElbow = 8,
+    PoseJointLWrist = 9,
+    PoseJointRWrist = 10,
+    PoseJointLHip = 11,
+    PoseJointRHip = 12,
+    PoseJointLKnee = 13,
+    PoseJointRKnee = 14,
+    PoseJointLAnkle = 15,
+    PoseJointRAnkle = 16,
+    PoseJointHeart = 17,  //!< Chest: shoulder midpoint dropped toward the hips.
+    PoseJointLHand = 18,  //!< Hand tip, extrapolated past the wrist (COCO-17 stops at the wrist).
+    PoseJointRHand = 19,
+    PoseJointHead = 20,   //!< Head center, above the nose.
+    PoseJointPelvis = 21, //!< Hip midpoint.
+    PoseJointCount = 22
+};
+
+//! Per-variable indices for the pose(JOINT, VAR) eval function (the ALL_CAPS X/Y/Z/CONF/VX/VY).
+enum PoseVar : int
+{
+    PoseVarX = 0,
+    PoseVarY = 1,
+    PoseVarZ = 2,
+    PoseVarConf = 3,
+    PoseVarVx = 4,
+    PoseVarVy = 5,
+    PoseVarCount = 6
+};
+
+//! One smoothed joint. Position holds its last confident value while confidence decays, so a
+//! preset anchoring to a joint doesn't get flung across the frame when the tracker drops it.
+struct PoseJointState
+{
+    float x{0.5f};     //!< [0,1] left to right (mirror already applied).
+    float y{0.5f};     //!< [0,1] bottom to top.
+    float z{-1.0f};    //!< [0,1] closeness; <0 when no depth is available.
+    float conf{0.0f};  //!< [0,1]; 0 = not detected.
+    float vx{0.0f};    //!< Velocity X, screen-fractions/sec.
+    float vy{0.0f};    //!< Velocity Y, screen-fractions/sec.
+};
+
+//! The full skeleton plus the derived scalars presets actually reach for. Read by the pose() eval
+//! function (registered in every eval context) and by the pose_* per-frame variables.
+struct PoseState
+{
+    PoseJointState joints[PoseJointCount]{};
+
+    // Derived "robust primitives" -- these never misfire, unlike gesture recognition.
+    float valid{0.0f};         //!< 1.0 when a person is tracked (pose_valid).
+    float handsApart{0.0f};    //!< Distance between the hands, normalized (hands_apart).
+    float handsTogether{0.0f}; //!< Smooth 1.0 as the hands close (hands_together).
+    float handsHeight{0.0f};   //!< Mean hand height relative to the shoulders (hands_height).
+    float armSpan{0.0f};       //!< Wrist-to-wrist distance (arm_span).
+    float lunge{0.0f};         //!< Peak joint speed -- the impulse trigger (lunge).
+};
+
 /**
  * @brief Holds all global data of the current rendering context, which can change from frame to frame.
  */
@@ -71,6 +139,10 @@ public:
     float touchPressure{0.0f}; //!< Touch pressure, [0,1]; 0 if the source has no pressure axis (touch_pressure).
     float touchVx{0.0f};       //!< Touch X velocity, screen-fractions/sec (touch_vx).
     float touchVy{0.0f};       //!< Touch Y velocity, screen-fractions/sec (touch_vy).
+
+    //! Full body skeleton, exposed to preset code via the pose(JOINT, VAR) eval function (in every
+    //! eval context, including custom shapes) plus the pose_* derived scalars. See POSE_API.md.
+    PoseState pose{};
 };
 
 } // namespace Renderer

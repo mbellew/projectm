@@ -33,8 +33,8 @@ namespace MilkdropPreset {
 
 MilkdropPreset::MilkdropPreset(const std::string& absoluteFilePath)
     : m_absoluteFilePath(absoluteFilePath)
-    , m_perFrameContext(m_state.globalMemory, &m_state.globalRegisters, &m_state.palette)
-    , m_perPixelContext(m_state.globalMemory, &m_state.globalRegisters, &m_state.palette)
+    , m_perFrameContext(m_state.globalMemory, &m_state.globalRegisters, &m_state.palette, &m_state.renderContext.pose)
+    , m_perPixelContext(m_state.globalMemory, &m_state.globalRegisters, &m_state.palette, &m_state.renderContext.pose)
     , m_motionVectors(m_state)
     , m_waveform(m_state)
     , m_darkenCenter(m_state)
@@ -44,8 +44,8 @@ MilkdropPreset::MilkdropPreset(const std::string& absoluteFilePath)
 }
 
 MilkdropPreset::MilkdropPreset(std::istream& presetData)
-    : m_perFrameContext(m_state.globalMemory, &m_state.globalRegisters, &m_state.palette)
-    , m_perPixelContext(m_state.globalMemory, &m_state.globalRegisters, &m_state.palette)
+    : m_perFrameContext(m_state.globalMemory, &m_state.globalRegisters, &m_state.palette, &m_state.renderContext.pose)
+    , m_perPixelContext(m_state.globalMemory, &m_state.globalRegisters, &m_state.palette, &m_state.renderContext.pose)
     , m_motionVectors(m_state)
     , m_waveform(m_state)
     , m_darkenCenter(m_state)

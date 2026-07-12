@@ -3,6 +3,7 @@
 #include "CustomWaveform.hpp"
 #include "MilkdropPresetExceptions.hpp"
 #include "PaletteEvalFunctions.hpp"
+#include "PoseEvalFunctions.hpp"
 #include "PerFrameContext.hpp"
 
 #include <Logging.hpp>
@@ -13,10 +14,11 @@
 namespace libprojectM {
 namespace MilkdropPreset {
 
-WaveformPerPointContext::WaveformPerPointContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette)
+WaveformPerPointContext::WaveformPerPointContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette, const Renderer::PoseState* pose)
     : perPointCodeContext(projectm_eval_context_create(gmegabuf, globalRegisters))
 {
     RegisterPaletteFunctions(perPointCodeContext, palette);
+    RegisterPoseFunctions(perPointCodeContext, pose);
 }
 
 WaveformPerPointContext::~WaveformPerPointContext()
@@ -35,6 +37,8 @@ WaveformPerPointContext::~WaveformPerPointContext()
 void WaveformPerPointContext::RegisterBuiltinVariables()
 {
     projectm_eval_context_reset_variables(perPointCodeContext);
+    // Constants must be re-set AFTER the reset: it zeroes every registered variable.
+    RegisterPoseConstants(perPointCodeContext);
 
     REG_VAR(time);
     REG_VAR(fps);

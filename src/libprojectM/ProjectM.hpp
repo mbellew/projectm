@@ -360,6 +360,14 @@ public:
     void VideoSetSegCentroid(float cx, float cy, float coverage);
 
     /**
+     * @brief Submits the current body-pose skeleton. Safe to call from any thread.
+     * @param jointsXYZC Flat array of 4 floats per joint (x, y, z, confidence), indexed by
+     *        Renderer::PoseJoint. Camera-native X; the mirror is applied internally.
+     * @param jointCount Number of joints supplied. Trailing joints are treated as not detected.
+     */
+    void SetPose(const float* jointsXYZC, size_t jointCount);
+
+    /**
      * @brief Draws the given texture on the active preset's main texture to get a "burn-in" effect.
      * @param openGlTextureId The OpenGL texture to draw onto the active preset(s).
      * @param left Left coordinate in pixels on the destination texture.
@@ -385,6 +393,9 @@ private:
 
     //! Finite-differences the touch point's velocity one frame (called from RenderFrame).
     void UpdateTouchState(double dtSeconds);
+
+    //! Smooths the pose skeleton, derives per-joint velocity and the pose_* scalars (RenderFrame).
+    void UpdatePoseState(double dtSeconds);
 
     uint32_t m_meshX{32};            //!< Per-point mesh horizontal resolution.
     uint32_t m_meshY{24};            //!< Per-point mesh vertical resolution.
@@ -466,6 +477,15 @@ private:
     float m_touchPrevX{0.5f};       //!< Previous-frame X for velocity finite-differencing.
     float m_touchPrevY{0.5f};       //!< Previous-frame Y for velocity finite-differencing.
     bool m_touchWasActive{false};   //!< Active state last frame (suppresses spawn/release velocity spikes).
+
+    // Body pose. The app writes the measured skeleton (capture thread) via SetPose; UpdatePoseState
+    // smooths it once per frame (render thread) into the pose outputs exposed through RenderContext.
+    // Same benign-race pattern as the seg centroid. See POSE_API.md.
+    std::atomic<uint32_t> m_poseSeq{0};    //!< Bumped on each app update; render thread sees freshness.
+    uint32_t m_poseSeqSeen{0};             //!< Last sequence the render thread processed.
+    float m_poseMeasured[Renderer::PoseJointCount][4]{}; //!< Latest submitted x,y,z,conf (mirror-corrected).
+    float m_poseSecondsSinceUpdate{1.0e3f};              //!< Time since the last app update (staleness).
+    Renderer::PoseState m_pose{};                        //!< Smoothed skeleton + derived scalars.
 };
 
 } // namespace libprojectM

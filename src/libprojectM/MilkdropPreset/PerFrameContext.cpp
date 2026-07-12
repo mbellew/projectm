@@ -2,6 +2,7 @@
 
 #include "MilkdropPresetExceptions.hpp"
 #include "PaletteEvalFunctions.hpp"
+#include "PoseEvalFunctions.hpp"
 
 #include <Logging.hpp>
 
@@ -11,10 +12,11 @@
 namespace libprojectM {
 namespace MilkdropPreset {
 
-PerFrameContext::PerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette)
+PerFrameContext::PerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette, const Renderer::PoseState* pose)
     : perFrameCodeContext(projectm_eval_context_create(gmegabuf, globalRegisters))
 {
     RegisterPaletteFunctions(perFrameCodeContext, palette);
+    RegisterPoseFunctions(perFrameCodeContext, pose);
 }
 
 PerFrameContext::~PerFrameContext()
@@ -33,6 +35,8 @@ PerFrameContext::~PerFrameContext()
 void PerFrameContext::RegisterBuiltinVariables()
 {
     projectm_eval_context_reset_variables(perFrameCodeContext);
+    // Constants must be re-set AFTER the reset: it zeroes every registered variable.
+    RegisterPoseConstants(perFrameCodeContext);
 
     REG_VAR(zoom);
     REG_VAR(zoomexp);
@@ -68,6 +72,12 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(touch_pressure);
     REG_VAR(touch_vx);
     REG_VAR(touch_vy);
+    REG_VAR(pose_valid);
+    REG_VAR(pose_hands_apart);
+    REG_VAR(pose_hands_together);
+    REG_VAR(pose_hands_height);
+    REG_VAR(pose_arm_span);
+    REG_VAR(pose_lunge);
     REG_VAR(preset_complete);
     REG_VAR(frame);
     REG_VAR(decay);
@@ -226,6 +236,12 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *touch_pressure = static_cast<PRJM_EVAL_F>(state.renderContext.touchPressure);
     *touch_vx = static_cast<PRJM_EVAL_F>(state.renderContext.touchVx);
     *touch_vy = static_cast<PRJM_EVAL_F>(state.renderContext.touchVy);
+    *pose_valid = static_cast<PRJM_EVAL_F>(state.renderContext.pose.valid);
+    *pose_hands_apart = static_cast<PRJM_EVAL_F>(state.renderContext.pose.handsApart);
+    *pose_hands_together = static_cast<PRJM_EVAL_F>(state.renderContext.pose.handsTogether);
+    *pose_hands_height = static_cast<PRJM_EVAL_F>(state.renderContext.pose.handsHeight);
+    *pose_arm_span = static_cast<PRJM_EVAL_F>(state.renderContext.pose.armSpan);
+    *pose_lunge = static_cast<PRJM_EVAL_F>(state.renderContext.pose.lunge);
     *preset_complete = 0.0; // Output flag: cleared each frame; the preset re-asserts it to stay "done".
     *frame = static_cast<PRJM_EVAL_F>(state.renderContext.frame);
     for (int q = 0; q < QVarCount; q++)

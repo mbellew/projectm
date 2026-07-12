@@ -73,6 +73,8 @@ add_library(MilkdropPreset OBJECT
         Palette.hpp
         PaletteEvalFunctions.cpp
         PaletteEvalFunctions.hpp
+        PoseEvalFunctions.cpp
+        PoseEvalFunctions.hpp
         PerFrameContext.cpp
         PerFrameContext.hpp
         PerPixelContext.cpp

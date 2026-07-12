@@ -167,6 +167,9 @@ void ProjectM::RenderFrame(uint32_t targetFramebufferObject /*= 0*/)
     // Finite-difference the touch point's velocity for touch_vx/touch_vy.
     UpdateTouchState(m_timeKeeper->SecondsSinceLastFrame());
 
+    // Smooth the pose skeleton and derive per-joint velocity + the pose_* scalars.
+    UpdatePoseState(m_timeKeeper->SecondsSinceLastFrame());
+
     // Check if the preset isn't locked, we've not already notified the user, and a
     // soft-cut transition isn't still in flight. The transitioning-preset guard closes
     // a window where the smoothing timer has ended (IsSmoothing() == false) but the new
@@ -821,6 +824,154 @@ void ProjectM::UpdateTouchState(double dtSeconds)
     m_touchWasActive = m_touchActive;
 }
 
+void ProjectM::SetPose(const float* jointsXYZC, size_t jointCount)
+{
+    // Called from the capture thread. The library owns horizontal mirroring (it travels with the
+    // frame), so mirror X here to match what presets see -- exactly as VideoSetSegCentroid does.
+    // Plain stores; the render thread reads them in UpdatePoseState() (benign races, like audio).
+    const size_t supplied = (jointsXYZC != nullptr)
+                                ? std::min(jointCount, static_cast<size_t>(Renderer::PoseJointCount))
+                                : 0;
+
+    for (size_t joint = 0; joint < supplied; ++joint)
+    {
+        const float* in = jointsXYZC + joint * 4;
+        m_poseMeasured[joint][0] = m_videoMirror ? (1.0f - in[0]) : in[0];
+        m_poseMeasured[joint][1] = in[1];
+        m_poseMeasured[joint][2] = in[2];
+        m_poseMeasured[joint][3] = in[3];
+    }
+    // Joints the app didn't supply are simply "not detected".
+    for (size_t joint = supplied; joint < static_cast<size_t>(Renderer::PoseJointCount); ++joint)
+    {
+        m_poseMeasured[joint][3] = 0.0f;
+    }
+
+    m_poseSeq.fetch_add(1, std::memory_order_relaxed);
+}
+
+void ProjectM::UpdatePoseState(double dtSeconds)
+{
+    const float dt = static_cast<float>(dtSeconds);
+
+    // Detect a fresh app update, so a stalled producer fades the skeleton out instead of freezing it.
+    const uint32_t seq = m_poseSeq.load(std::memory_order_relaxed);
+    if (seq != m_poseSeqSeen)
+    {
+        m_poseSeqSeen = seq;
+        m_poseSecondsSinceUpdate = 0.0f;
+    }
+    else
+    {
+        m_poseSecondsSinceUpdate += dt;
+    }
+
+    constexpr float kStaleTimeout = 0.5f; // s without an update => the skeleton is gone
+    constexpr float kTauPos = 0.06f;      // s, position ease -- a wrist must stay responsive
+    constexpr float kTauVel = 0.10f;      // s, velocity smoothing
+    constexpr float kTauConf = 0.12f;     // s, confidence ease (fade in/out)
+
+    const float recency = std::clamp(1.0f - m_poseSecondsSinceUpdate / kStaleTimeout, 0.0f, 1.0f);
+    const float ap = (dt > 0.0f) ? (1.0f - std::exp(-dt / kTauPos)) : 1.0f;
+    const float av = (dt > 0.0f) ? (1.0f - std::exp(-dt / kTauVel)) : 1.0f;
+    const float ac = (dt > 0.0f) ? (1.0f - std::exp(-dt / kTauConf)) : 1.0f;
+
+    float maxSpeed = 0.0f;
+    float bestConf = 0.0f;
+
+    for (int joint = 0; joint < Renderer::PoseJointCount; ++joint)
+    {
+        auto& out = m_pose.joints[joint];
+        const float measuredConf = m_poseMeasured[joint][3] * recency;
+
+        const float prevX = out.x;
+        const float prevY = out.y;
+
+        // Position only tracks while the joint is actually seen; when it's lost the position HOLDS
+        // and only the confidence decays (snapping a lost joint to center would fling anything a
+        // preset anchored to it across the frame). See POSE_API.md.
+        if (measuredConf > 0.01f)
+        {
+            out.x += (m_poseMeasured[joint][0] - out.x) * ap;
+            out.y += (m_poseMeasured[joint][1] - out.y) * ap;
+            out.z = m_poseMeasured[joint][2];
+        }
+
+        out.conf += (measuredConf - out.conf) * ac;
+        if (out.conf < 0.002f)
+        {
+            out.conf = 0.0f;
+        }
+
+        // Velocity from the smoothed position, damped by confidence so a vanished joint reports
+        // ~0 motion rather than phantom drift.
+        if (dt > 1.0e-5f)
+        {
+            const float instVx = (out.x - prevX) / dt * out.conf;
+            const float instVy = (out.y - prevY) / dt * out.conf;
+            out.vx += (instVx - out.vx) * av;
+            out.vy += (instVy - out.vy) * av;
+        }
+
+        maxSpeed = std::max(maxSpeed, std::sqrt(out.vx * out.vx + out.vy * out.vy) * out.conf);
+        bestConf = std::max(bestConf, out.conf);
+    }
+
+    m_pose.valid = (bestConf > 0.3f) ? 1.0f : 0.0f;
+    m_pose.lunge = maxSpeed;
+
+    // --- Derived "robust primitives" (see POSE_API.md): these never misfire, unlike recognition.
+    const auto& leftHand = m_pose.joints[Renderer::PoseJointLHand];
+    const auto& rightHand = m_pose.joints[Renderer::PoseJointRHand];
+    const auto& leftWrist = m_pose.joints[Renderer::PoseJointLWrist];
+    const auto& rightWrist = m_pose.joints[Renderer::PoseJointRWrist];
+    const auto& leftShoulder = m_pose.joints[Renderer::PoseJointLShoulder];
+    const auto& rightShoulder = m_pose.joints[Renderer::PoseJointRShoulder];
+
+    constexpr float kSeen = 0.2f;
+
+    if (leftHand.conf > kSeen && rightHand.conf > kSeen)
+    {
+        const float dx = leftHand.x - rightHand.x;
+        const float dy = leftHand.y - rightHand.y;
+        const float dist = std::sqrt(dx * dx + dy * dy);
+        m_pose.handsApart = dist;
+        // Smoothly 1.0 as the hands close: full below ~0.05, gone beyond ~0.45.
+        m_pose.handsTogether = std::clamp(1.0f - (dist - 0.05f) / 0.40f, 0.0f, 1.0f);
+    }
+    else
+    {
+        m_pose.handsApart = 0.0f;
+        m_pose.handsTogether = 0.0f;
+    }
+
+    if (leftWrist.conf > kSeen && rightWrist.conf > kSeen)
+    {
+        const float dx = leftWrist.x - rightWrist.x;
+        const float dy = leftWrist.y - rightWrist.y;
+        m_pose.armSpan = std::sqrt(dx * dx + dy * dy);
+    }
+    else
+    {
+        m_pose.armSpan = 0.0f;
+    }
+
+    // Mean hand height relative to the shoulder line (positive = raised).
+    if (leftShoulder.conf > kSeen && rightShoulder.conf > kSeen)
+    {
+        const float shoulderY = (leftShoulder.y + rightShoulder.y) * 0.5f;
+        float sum = 0.0f;
+        float count = 0.0f;
+        if (leftHand.conf > kSeen) { sum += leftHand.y; count += 1.0f; }
+        if (rightHand.conf > kSeen) { sum += rightHand.y; count += 1.0f; }
+        m_pose.handsHeight = (count > 0.0f) ? ((sum / count) - shoulderY) : 0.0f;
+    }
+    else
+    {
+        m_pose.handsHeight = 0.0f;
+    }
+}
+
 auto ProjectM::GetRenderContext() -> Renderer::RenderContext
 {
     Renderer::RenderContext ctx{};
@@ -866,6 +1017,8 @@ auto ProjectM::GetRenderContext() -> Renderer::RenderContext
     ctx.touchPressure = m_touchPressure;
     ctx.touchVx = m_touchVx;
     ctx.touchVy = m_touchVy;
+
+    ctx.pose = m_pose;
 
     if (m_transition)
     {

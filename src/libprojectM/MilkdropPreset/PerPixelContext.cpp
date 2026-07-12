@@ -2,6 +2,7 @@
 
 #include "MilkdropPresetExceptions.hpp"
 #include "PaletteEvalFunctions.hpp"
+#include "PoseEvalFunctions.hpp"
 #include "PerFrameContext.hpp"
 
 #include <Logging.hpp>
@@ -12,10 +13,11 @@
 namespace libprojectM {
 namespace MilkdropPreset {
 
-PerPixelContext::PerPixelContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette)
+PerPixelContext::PerPixelContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette, const Renderer::PoseState* pose)
     : perPixelCodeContext(projectm_eval_context_create(gmegabuf, globalRegisters))
 {
     RegisterPaletteFunctions(perPixelCodeContext, palette);
+    RegisterPoseFunctions(perPixelCodeContext, pose);
 }
 
 PerPixelContext::~PerPixelContext()
@@ -34,6 +36,8 @@ PerPixelContext::~PerPixelContext()
 void PerPixelContext::RegisterBuiltinVariables()
 {
     projectm_eval_context_reset_variables(perPixelCodeContext);
+    // Constants must be re-set AFTER the reset: it zeroes every registered variable.
+    RegisterPoseConstants(perPixelCodeContext);
 
     REG_VAR(zoom);
     REG_VAR(zoomexp);

@@ -15,8 +15,8 @@ static constexpr int CustomWaveformMaxSamples = std::max(Audio::WaveformSamples,
 
 CustomWaveform::CustomWaveform(PresetState& presetState)
     : m_presetState(presetState)
-    , m_perFrameContext(presetState.globalMemory, &presetState.globalRegisters, &presetState.palette)
-    , m_perPointContext(presetState.globalMemory, &presetState.globalRegisters, &presetState.palette)
+    , m_perFrameContext(presetState.globalMemory, &presetState.globalRegisters, &presetState.palette, &presetState.renderContext.pose)
+    , m_perPointContext(presetState.globalMemory, &presetState.globalRegisters, &presetState.palette, &presetState.renderContext.pose)
     , m_mesh(Renderer::VertexBufferUsage::StreamDraw, true, false)
 {
     m_perFrameContext.RegisterBuiltinVariables();

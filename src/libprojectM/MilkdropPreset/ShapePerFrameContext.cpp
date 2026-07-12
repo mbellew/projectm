@@ -3,6 +3,7 @@
 #include "CustomShape.hpp"
 #include "MilkdropPresetExceptions.hpp"
 #include "PaletteEvalFunctions.hpp"
+#include "PoseEvalFunctions.hpp"
 
 #include <Logging.hpp>
 
@@ -12,10 +13,11 @@
 namespace libprojectM {
 namespace MilkdropPreset {
 
-ShapePerFrameContext::ShapePerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette)
+ShapePerFrameContext::ShapePerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette, const Renderer::PoseState* pose)
     : perFrameCodeContext(projectm_eval_context_create(gmegabuf, globalRegisters))
 {
     RegisterPaletteFunctions(perFrameCodeContext, palette);
+    RegisterPoseFunctions(perFrameCodeContext, pose);
 }
 
 ShapePerFrameContext::~ShapePerFrameContext()
@@ -34,6 +36,8 @@ ShapePerFrameContext::~ShapePerFrameContext()
 void ShapePerFrameContext::RegisterBuiltinVariables()
 {
     projectm_eval_context_reset_variables(perFrameCodeContext);
+    // Constants must be re-set AFTER the reset: it zeroes every registered variable.
+    RegisterPoseConstants(perFrameCodeContext);
 
     REG_VAR(time);
     REG_VAR(fps);

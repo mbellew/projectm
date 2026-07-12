@@ -26,7 +26,7 @@ public:
      * @param gmegabuf The global memory buffer to use in the code context.
      * @param globalRegisters The global variables to use in the code context.
      */
-    PerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette);
+    PerFrameContext(projectm_eval_mem_buffer gmegabuf, PRJM_EVAL_F (*globalRegisters)[100], const Palette* palette, const Renderer::PoseState* pose);
 
     /**
      * @brief Destructor.
@@ -100,6 +100,14 @@ public:
     PRJM_EVAL_F* touch_pressure{}; //!< Touch pressure, 0..1 (0 if the source has no pressure axis).
     PRJM_EVAL_F* touch_vx{};       //!< Touch X velocity, screen-fractions/sec.
     PRJM_EVAL_F* touch_vy{};       //!< Touch Y velocity, screen-fractions/sec.
+    // Derived pose scalars -- the "robust primitives" (see POSE_API.md). The skeleton itself is read
+    // with the pose(JOINT_*, POSE_*) function, which is registered in every eval context.
+    PRJM_EVAL_F* pose_valid{};          //!< 1.0 when a person is tracked, else 0.0.
+    PRJM_EVAL_F* pose_hands_apart{};    //!< Distance between the hands, normalized.
+    PRJM_EVAL_F* pose_hands_together{}; //!< Smoothly 1.0 as the hands close.
+    PRJM_EVAL_F* pose_hands_height{};   //!< Mean hand height relative to the shoulders (>0 = raised).
+    PRJM_EVAL_F* pose_arm_span{};       //!< Wrist-to-wrist distance.
+    PRJM_EVAL_F* pose_lunge{};          //!< Peak joint speed -- the impulse trigger.
     PRJM_EVAL_F* preset_complete{}; //!< Preset-writable: set > 0.5 to ask projectM to switch away.
     PRJM_EVAL_F* wave_a{};
     PRJM_EVAL_F* wave_av{}; //!< /*FLOATBUF*/ Base-waveform per-pixel alpha-channel state value (wave_av, default 1.0).
