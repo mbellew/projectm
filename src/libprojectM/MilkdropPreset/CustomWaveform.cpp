@@ -194,7 +194,21 @@ void CustomWaveform::Draw(const PerFrameContext& presetPerFrameContext)
 
     shader->Bind();
     shader->SetUniformMat4x4("vertex_transformation", PresetState::orthogonalProjection);
-    shader->SetUniformFloat("vertex_point_size", m_drawThick ? 2.0f : 1.0f);
+
+    // The vertex shader writes gl_PointSize, but a GL CORE PROFILE IGNORES IT unless
+    // GL_PROGRAM_POINT_SIZE is enabled -- points then rasterize at a fixed 1.0 px and the uniform
+    // does nothing at all. So bUseDots waveforms were always hairline-thin, and bDrawThick had no
+    // effect on them, regardless of the resolution being rendered at.
+    //
+    // Scale with the viewport as well: Milkdrop's 1-2 px dots were sized for a ~1024px-wide screen.
+    // At a 2940px-wide internal buffer (a HiDPI display, or supersampling) a literal 1 px dot is
+    // invisible, which is not what the preset asked for -- it asked for a dot you can see.
+    const float pointScale = std::clamp(static_cast<float>(m_presetState.renderContext.viewportSizeX) / 1024.0f, 1.0f, 4.0f);
+    shader->SetUniformFloat("vertex_point_size", (m_drawThick ? 2.0f : 1.0f) * pointScale);
+    if (m_useDots)
+    {
+        glEnable(GL_PROGRAM_POINT_SIZE);
+    }
 
     /*FLOATBUF*/
     // Enable the loc3 "alpha state" vertex attribute (the 5th float of Color) for the dual-source
@@ -251,6 +265,13 @@ void CustomWaveform::Draw(const PerFrameContext& presetPerFrameContext)
 
         m_mesh.Update();
         m_mesh.Draw();
+    }
+
+    if (m_useDots)
+    {
+        // Do not leak the state: every later draw in the frame would inherit it, and any other
+        // shader that happens to write gl_PointSize would suddenly start being obeyed.
+        glDisable(GL_PROGRAM_POINT_SIZE);
     }
 
     m_mesh.Unbind();
