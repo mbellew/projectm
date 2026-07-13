@@ -1382,7 +1382,25 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     // NEARER can now only make the gate more permissive, never erode the subject.
     const float bandOrigin = std::min(refClose, refMeasured);
     const float ramp = std::max(0.02f, I.depthBand * 0.4f);
-    const float keepEdge = bandOrigin - I.depthBand;
+
+    // The band is an ABSOLUTE slice of a RELATIVE coordinate system, and that breaks down when the
+    // subject is far. Closeness is P05/P95-normalized, so a subject reading 0.19 has less than
+    // `band` (0.20) of range behind them: the edge goes NEGATIVE, every component passes, and the
+    // gate silently stops gating -- exactly when a performer steps back, which on a stage is a
+    // normal thing to do. Observed live: `refClose=0.19 ... keep>=-0.01`.
+    //
+    // A proportional floor fixes it, and there is a physical reason to prefer one: Depth Anything
+    // emits INVERSE depth, so closeness ~ 1/distance. An additive band is therefore a different
+    // real-world distance depending on where the subject stands -- huge up close, meaningless far
+    // away -- whereas a band proportional to the anchor's closeness means a constant RATIO of
+    // distance ("drop anyone more than 1/bandFrac times farther than the subject"). The default 0.5
+    // reads as "more than twice as far away as the subject".
+    //
+    // Taking the MAX keeps the additive rule wherever it is well-behaved (refClose >= ~0.40, which
+    // covers every scene validated so far) and only takes over as it degenerates. It also makes
+    // keepEdge >= 0 by construction, so the gate can never be inert again.
+    const float bandFrac = std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_BANDFRAC", 0.5f), 0.0f, 1.0f);
+    const float keepEdge = std::max(bandOrigin - I.depthBand, bandOrigin * bandFrac);
     auto keepWeight = [&](float close) {
         const float t = std::clamp((close - (keepEdge - ramp)) / (2.0f * ramp), 0.0f, 1.0f);
         return t * t * (3.0f - 2.0f * t); // ~1 at/nearer than target, ~0 well behind it
