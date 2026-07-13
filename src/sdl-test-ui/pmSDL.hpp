@@ -166,6 +166,11 @@ public:
     void setFps(size_t fps);
     size_t fps() const;
 
+    // The default playlist order. THE ONE PLACE this is defined: setupSDLApp() uses it as the
+    // fallback when reading the config, so the mere PRESENCE of a config.inp no longer flips the
+    // default. Only an explicit "Shuffle = 0" turns it off.
+    static constexpr bool kDefaultShuffle{true};
+
     // Sets whether the playlist plays in shuffled (random) or sequential order.
     // Set from config ("Shuffle") in setupSDLApp(); the 'y' key still toggles it at runtime.
     void setShuffle(bool shuffle);
@@ -265,7 +270,7 @@ private:
     // (Re)creates the offscreen render target for the current _ssWidth/_ssHeight.
     void ensureSupersampleTarget();
 
-    bool _shuffle{true};
+    bool _shuffle{kDefaultShuffle};
 
     // audio input device characteristics
     unsigned int _numAudioDevices{0};

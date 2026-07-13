@@ -358,10 +358,12 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
 
         app->setFps(config.read<uint32_t>("FPS", 60));
 
-        // Playlist order: shuffle (random) vs. sequential. Default off, so presets play in
-        // playlist order -- alphabetical for a directory, file order for a PROJECTM_PRESET_LIST.
-        // The 'y' key still toggles this at runtime.
-        app->setShuffle(config.read<bool>("Shuffle", false));
+        // Playlist order: shuffle (random) vs. sequential. The fallback is the SAME default the app
+        // starts with, so merely HAVING a config.inp no longer changes the behaviour -- previously
+        // this fell back to false while the app's own default was true, meaning the presence of a
+        // config file silently turned shuffle off. Only an explicit "Shuffle = 0" disables it now.
+        // The 'y' key still toggles it at runtime.
+        app->setShuffle(config.read<bool>("Shuffle", projectMSDL::kDefaultShuffle));
 
         // Appliance: start fullscreen and pick capture sources by preference order.
         startFullscreen = config.read<bool>("Fullscreen", false);
