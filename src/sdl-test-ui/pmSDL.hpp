@@ -225,6 +225,25 @@ public:
     // applies the same flip so touch lands where the performer sees their hand.
     void setVideoMirror(bool mirror) { _videoMirror = mirror; }
 
+    /**
+     * Enables the IDLE STAND-IN: when nobody is in front of the camera, inject a drifting image into
+     * the video matte so the visuals still have a "person" to react to. Off unless @p imagePath is
+     * set (a deployment choice, not a default -- see config.inp "Idle Image").
+     *
+     * The stand-in is submitted as the matte: alpha = the image's silhouette, RGB = its pixels, and
+     * seg_cx/seg_cy/seg_coverage describe it as if it were a person. Presets that need a REAL body
+     * (pose ignition, the touch bridge) must opt out via the preset-readable `seg_idle`, which is 1
+     * exactly while the stand-in is live.
+     *
+     * @param imagePath RGBA PNG. Empty disables the feature entirely.
+     * @param delaySeconds How long nobody must be present before it turns on. RELUCTANT ON: a
+     *        performer standing still, or briefly stepping out of frame, must not trigger it.
+     * @param coverageFloor Matte coverage below which the frame counts as empty.
+     * @param heightFraction The stand-in's height as a fraction of the frame height.
+     */
+    void setIdleStandIn(const std::string& imagePath, float delaySeconds, float coverageFloor,
+                        float heightFraction);
+
     bool done{false};
     bool mouseDown{false};
     bool wasapi{false};    // Used to track if wasapi is currently active. This bool will allow us to run a WASAPI app and still toggle to microphone inputs.
@@ -313,6 +332,30 @@ private:
 
     // Whether the camera feed is mirrored ("Video Mirror"); the pose->touch bridge matches the flip.
     bool _videoMirror{false};
+
+    // --- Idle stand-in (see setIdleStandIn). All of this is inert unless an image was loaded.
+    std::vector<uint8_t> _idleImage; //!< RGBA, tightly packed.
+    int _idleImageW{0};
+    int _idleImageH{0};
+    float _idleDelay{5.0f};      //!< Seconds of nobody before the stand-in appears.
+    float _idleCoverage{0.02f};  //!< Matte coverage below this = nobody in frame.
+    float _idleScale{0.25f};     //!< Stand-in height as a fraction of the frame height ("Idle Scale").
+    double _idleAbsentFor{0.0};  //!< Seconds the frame has been empty (reset the instant anyone appears).
+    bool _idleActive{false};     //!< The stand-in is live right now (mirrors seg_idle).
+    double _idleClock{0.0};      //!< Drives the Lissajous drift; only advances while active.
+    std::chrono::steady_clock::time_point _idleLastTs{}; //!< For the gate's dt (capture-thread clock).
+    bool _idleHasTs{false};
+
+    /**
+     * Runs the idle gate and, when it is open, replaces the matte with the drifting stand-in.
+     * @param rgba The frame the masker just produced (RGB + person matte in alpha); overwritten.
+     * @param personPresent Whether anyone is really in frame this instant.
+     * @param cx,cy,coverage The matte's centroid/coverage; REWRITTEN to describe the stand-in when it
+     *        is live, so everything that follows the performer follows the stand-in instead.
+     * @return true when the stand-in was injected.
+     */
+    bool applyIdleStandIn(std::vector<uint8_t>& rgba, int w, int h, double dt, bool personPresent,
+                          float& cx, float& cy, float& coverage);
 
     std::string _presetName; //!< Current preset name
 

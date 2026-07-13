@@ -93,6 +93,7 @@ public:
     PRJM_EVAL_F* seg_vx{};       //!< Person-seg centroid velocity X, screen-fractions/sec.
     PRJM_EVAL_F* seg_vy{};       //!< Person-seg centroid velocity Y, screen-fractions/sec.
     PRJM_EVAL_F* seg_coverage{}; //!< Person-seg foreground fraction, 0..1.
+    PRJM_EVAL_F* seg_idle{};     //!< 1 when the matte is a synthetic idle stand-in, not a person.
     PRJM_EVAL_F* seg_valid{};    //!< 1.0 when a confident mask is present, else 0.0.
     PRJM_EVAL_F* touch_on{};       //!< 1.0 while a touch is active, else 0.0.
     PRJM_EVAL_F* touch_x{};        //!< Touch X, 0..1 left to right.

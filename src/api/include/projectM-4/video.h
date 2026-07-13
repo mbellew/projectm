@@ -208,6 +208,23 @@ PROJECTM_EXPORT bool projectm_video_is_active(projectm_handle instance);
  * @param coverage Foreground fraction of the frame, [0,1].
  * @since 4.3.0
  */
+/**
+ * @brief Marks the current foreground matte as a SYNTHETIC stand-in, not a real person.
+ *
+ * An application may inject an idle stand-in (a drifting logo, say) into the video matte when nobody
+ * is in front of the camera, so the visuals have something to react to. The matte, seg_cx/seg_cy and
+ * seg_coverage then describe that stand-in exactly as if it were a person -- which is the point, and
+ * also the hazard: a preset that requires a REAL body (pose ignition, the touch bridge) would treat a
+ * logo as a performer. Presets read this as `seg_idle` (1 = synthetic) and opt out.
+ *
+ * Not smoothed -- it is a latch, and the application's gate owns the decision.
+ *
+ * @param instance The projectM instance handle.
+ * @param idle True when the matte is a synthetic stand-in.
+ * @since 4.2.0
+ */
+PROJECTM_EXPORT void projectm_video_set_seg_idle(projectm_handle instance, bool idle);
+
 PROJECTM_EXPORT void projectm_video_set_seg_centroid(projectm_handle instance,
                                                      float cx, float cy, float coverage);
 

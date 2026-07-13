@@ -737,6 +737,13 @@ auto ProjectM::VideoIsActive() const -> bool
     return m_videoTexture != nullptr;
 }
 
+void ProjectM::VideoSetSegIdle(bool idle)
+{
+    // NOT smoothed: this is a latch, not a measurement. The app's gate already decides when to turn
+    // it on (reluctantly) and off (instantly); easing it here would just blur that decision.
+    m_segIdle = idle ? 1.0f : 0.0f;
+}
+
 void ProjectM::VideoSetSegCentroid(float cx, float cy, float coverage)
 {
     // Called from the capture thread. The library owns horizontal mirroring (it travels with
@@ -1018,6 +1025,7 @@ auto ProjectM::GetRenderContext() -> Renderer::RenderContext
     ctx.segVx = m_segVx;
     ctx.segVy = m_segVy;
     ctx.segCoverage = m_segCoverage;
+    ctx.segIdle = m_segIdle;
     ctx.segValid = m_segValid;
 
     ctx.touchOn = m_touchActive ? 1.0f : 0.0f;

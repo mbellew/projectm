@@ -30,6 +30,8 @@
 
 #include "pmSDL.hpp"
 
+#include <stb_image.h>
+
 #include "screenshot.hpp"
 
 #include <algorithm>
@@ -345,6 +347,78 @@ void projectMSDL::startVideoCapture()
                                         /*mirror=*/false, *outBuf);
                         const auto tSegDone = std::chrono::steady_clock::now();
 
+                        // Pose runs AFTER the submit below, so this holds the PREVIOUS frame's
+                        // detections -- one frame stale, which is irrelevant either for a debug
+                        // marker or for a gate whose threshold is measured in seconds.
+                        static std::vector<PersonPose> poses;
+
+                        // --- IDLE STAND-IN ------------------------------------------------
+                        // The centroid moved UP here, ahead of the submit, because the idle gate needs
+                        // to know whether anyone is in frame before the frame is handed to the library
+                        // -- and coverage is what tells it.
+                        // Alpha-weighted centroid of the matte (the fallback "center") -> seg_*.
+                        // Row 0 is the top of the frame; flip Y so cy matches preset per-pixel
+                        // y (bottom-up). The library applies mirror and all smoothing.
+                        // The gate is no longer baked into the alpha (it is applied on the GPU), so
+                        // weight by it here -- without this the centroid drifts toward the
+                        // background people the gate exists to remove.
+                        //
+                        // Sampled on a stride: a centroid is an integral, so every 4th pixel in each
+                        // axis gives the same answer to well under a pixel while costing 1/16th as
+                        // much -- which is what makes a per-sample bilinear gate fetch affordable at
+                        // all (doing it per pixel is exactly the full-res pass we just removed).
+                        const auto tCentroidStart = std::chrono::steady_clock::now();
+                        const uint8_t* px = outBuf->data();
+                        const bool gated = masker->HasGate();
+                        constexpr int kStride = 4;
+                        double sumA = 0.0, sumXA = 0.0, sumYA = 0.0;
+                        const double invW = (width > 1) ? 1.0 / (width - 1) : 0.0;
+                        const double invH = (height > 1) ? 1.0 / (height - 1) : 0.0;
+                        int samples = 0;
+                        for (int row = 0; row < height; row += kStride)
+                        {
+                            const double yv = 1.0 - row * invH; // bottom-up
+                            for (int col = 0; col < width; col += kStride, ++samples)
+                            {
+                                double a = px[(static_cast<size_t>(row) * width + col) * 4 + 3] / 255.0;
+                                if (gated)
+                                {
+                                    a *= masker->SampleGate(static_cast<float>(col * invW),
+                                                            static_cast<float>(yv));
+                                }
+                                sumA += a;
+                                sumXA += a * (col * invW);
+                                sumYA += a * yv;
+                            }
+                        }
+                        float cx = 0.5f, cy = 0.5f, coverage = 0.0f;
+                        if (sumA > 1e-6)
+                        {
+                            cx = static_cast<float>(sumXA / sumA);
+                            cy = static_cast<float>(sumYA / sumA);
+                            coverage = static_cast<float>(sumA / std::max(1, samples));
+                        }
+                        const double centroidMs = std::chrono::duration<double, std::milli>(
+                                                      std::chrono::steady_clock::now() - tCentroidStart)
+                                                      .count();
+
+
+                        // Nobody in frame? Then (optionally, and only for a deployment that asked for
+                        // it) inject a drifting stand-in as the "person", so the visuals have
+                        // something to react to. `poses` is last frame's -- one frame stale, which is
+                        // nothing against a multi-second gate. Presence is matte OR pose: a performer
+                        // who is present but whose matte briefly collapses still counts.
+                        const double idleDt = _idleHasTs
+                                                  ? std::chrono::duration<double>(tCbStart - _idleLastTs).count()
+                                                  : 0.0;
+                        _idleLastTs = tCbStart;
+                        _idleHasTs = true;
+                        const bool personPresent =
+                            (coverage > _idleCoverage) ||
+                            (!poses.empty() && poses.front().score > 0.4f);
+                        applyIdleStandIn(*outBuf, width, height, idleDt, personPresent, cx, cy, coverage);
+                        projectm_video_set_seg_idle(handle, _idleActive);
+
                         // $PROJECTM_SEG_MARKERS=1: stamp WHO THE SYSTEM THINKS THE SUBJECT IS into
                         // the frame. There are three independent answers and they can disagree:
                         //   magenta = the depth gate's ANCHOR (its depth sets the keep band, so this
@@ -354,9 +428,6 @@ void projectMSDL::startVideoCapture()
                         // Alpha is forced opaque so the marker survives a mask-only preset (e.g. the
                         // green-screen test) even when it lands off the matte -- which is itself the
                         // tell that the two elections have diverged.
-                        // Pose runs AFTER the submit below, so this holds the PREVIOUS frame's
-                        // detections -- one frame stale, which is irrelevant for a debug marker.
-                        static std::vector<PersonPose> poses;
 
                         static const bool markers = std::getenv("PROJECTM_SEG_MARKERS") != nullptr;
                         if (markers)
@@ -484,52 +555,6 @@ void projectMSDL::startVideoCapture()
                         const double poseMs = std::chrono::duration<double, std::milli>(
                                                   std::chrono::steady_clock::now() - tPoseStart)
                                                   .count();
-
-                        // Alpha-weighted centroid of the matte (the fallback "center") -> seg_*.
-                        // Row 0 is the top of the frame; flip Y so cy matches preset per-pixel
-                        // y (bottom-up). The library applies mirror and all smoothing.
-                        // The gate is no longer baked into the alpha (it is applied on the GPU), so
-                        // weight by it here -- without this the centroid drifts toward the
-                        // background people the gate exists to remove.
-                        //
-                        // Sampled on a stride: a centroid is an integral, so every 4th pixel in each
-                        // axis gives the same answer to well under a pixel while costing 1/16th as
-                        // much -- which is what makes a per-sample bilinear gate fetch affordable at
-                        // all (doing it per pixel is exactly the full-res pass we just removed).
-                        const auto tCentroidStart = std::chrono::steady_clock::now();
-                        const uint8_t* px = outBuf->data();
-                        const bool gated = masker->HasGate();
-                        constexpr int kStride = 4;
-                        double sumA = 0.0, sumXA = 0.0, sumYA = 0.0;
-                        const double invW = (width > 1) ? 1.0 / (width - 1) : 0.0;
-                        const double invH = (height > 1) ? 1.0 / (height - 1) : 0.0;
-                        int samples = 0;
-                        for (int row = 0; row < height; row += kStride)
-                        {
-                            const double yv = 1.0 - row * invH; // bottom-up
-                            for (int col = 0; col < width; col += kStride, ++samples)
-                            {
-                                double a = px[(static_cast<size_t>(row) * width + col) * 4 + 3] / 255.0;
-                                if (gated)
-                                {
-                                    a *= masker->SampleGate(static_cast<float>(col * invW),
-                                                            static_cast<float>(yv));
-                                }
-                                sumA += a;
-                                sumXA += a * (col * invW);
-                                sumYA += a * yv;
-                            }
-                        }
-                        float cx = 0.5f, cy = 0.5f, coverage = 0.0f;
-                        if (sumA > 1e-6)
-                        {
-                            cx = static_cast<float>(sumXA / sumA);
-                            cy = static_cast<float>(sumYA / sumA);
-                            coverage = static_cast<float>(sumA / std::max(1, samples));
-                        }
-                        const double centroidMs = std::chrono::duration<double, std::milli>(
-                                                      std::chrono::steady_clock::now() - tCentroidStart)
-                                                      .count();
 
                         // seg_cx/seg_cy are EXACTLY the matte centroid -- always, with no pose
                         // dependency. (An earlier version substituted a pose chest point here, which
@@ -1739,4 +1764,133 @@ void projectMSDL::UpdateWindowTitle()
         title.append(" [locked]");
     }
     SDL_SetWindowTitle(_sdlWindow, title.c_str());
+}
+
+void projectMSDL::setIdleStandIn(const std::string& imagePath, float delaySeconds, float coverageFloor,
+                                 float heightFraction)
+{
+    _idleImage.clear();
+    _idleImageW = _idleImageH = 0;
+    _idleDelay = std::max(0.0f, delaySeconds);
+    _idleCoverage = std::clamp(coverageFloor, 0.0f, 1.0f);
+    _idleScale = std::clamp(heightFraction, 0.02f, 1.0f);
+    if (imagePath.empty())
+    {
+        return; // feature off -- the default for every deployment that did not ask for it
+    }
+
+    int w = 0, h = 0, ch = 0;
+    stbi_uc* rgba = stbi_load(imagePath.c_str(), &w, &h, &ch, 4);
+    if (rgba == nullptr || w <= 0 || h <= 0)
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "[Idle] Cannot load stand-in image '%s'; idle injection disabled.",
+                    imagePath.c_str());
+        if (rgba != nullptr) { stbi_image_free(rgba); }
+        return;
+    }
+    _idleImage.assign(rgba, rgba + static_cast<size_t>(w) * h * 4);
+    stbi_image_free(rgba);
+    _idleImageW = w;
+    _idleImageH = h;
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[Idle] Stand-in '%s' (%dx%d): appears after %.1fs with nobody in frame "
+                "(coverage < %.3f), at %.0f%% of frame height.",
+                imagePath.c_str(), w, h, _idleDelay, _idleCoverage, _idleScale * 100.0f);
+}
+
+bool projectMSDL::applyIdleStandIn(std::vector<uint8_t>& rgba, int w, int h, double dt,
+                                   bool personPresent, float& cx, float& cy, float& coverage)
+{
+    if (_idleImage.empty() || w <= 0 || h <= 0)
+    {
+        return false;
+    }
+
+    // QUICK OFF. The instant anyone is present the stand-in is gone -- no fade, no debounce. A
+    // performer stepping in must never have to wait for a logo to get out of their way.
+    if (personPresent)
+    {
+        if (_idleActive)
+        {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[Idle] OFF -- someone is in frame.");
+        }
+        _idleAbsentFor = 0.0;
+        _idleActive = false;
+        return false;
+    }
+
+    // RELUCTANT ON. The absence has to persist. Someone standing still, or briefly out of frame,
+    // must not summon it. (Once it IS on, it stays on until someone appears -- the delay is the cost
+    // of entry, not a per-frame test.)
+    _idleAbsentFor += dt;
+    if (!_idleActive && _idleAbsentFor < _idleDelay)
+    {
+        return false;
+    }
+    if (!_idleActive)
+    {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[Idle] ON -- nobody in frame for %.1fs.", _idleAbsentFor);
+    }
+    _idleActive = true;
+    _idleClock += dt;
+
+    // Lissajous drift: two incommensurate frequencies, so the path never repeats and never settles
+    // into an obvious loop. Slow -- this is ambience, not motion.
+    const double t = _idleClock;
+    const float fx = 0.5f + 0.20f * static_cast<float>(std::sin(0.13 * t));
+    const float fy = 0.5f + 0.13f * static_cast<float>(std::sin(0.19 * t + 1.7));
+
+    // Height is a fraction of the frame ("Idle Scale"), aspect preserved. Keep it modest: this is a
+    // stand-in drifting through an empty room, not a title card -- and every pixel of it is MATTE, so
+    // a big one hands the presets a big "person" to warp.
+    const float scale = (_idleScale * h) / static_cast<float>(_idleImageH);
+    const int dw = std::max(1, static_cast<int>(_idleImageW * scale));
+    const int dh = std::max(1, static_cast<int>(_idleImageH * scale));
+    const int x0 = static_cast<int>(fx * w) - dw / 2;
+    const int y0 = static_cast<int>((1.0f - fy) * h) - dh / 2; // fy is bottom-up; row 0 is the top
+
+    // The matte is the stand-in and NOTHING else: clear the alpha first, or the real (empty-ish)
+    // matte's noise would hang around it. RGB is left as the camera's, and the stand-in is composited
+    // over it by its own alpha -- so it reads as an object in the room, not a sticker on the lens.
+    for (size_t i = 0; i < static_cast<size_t>(w) * h; ++i)
+    {
+        rgba[i * 4 + 3] = 0;
+    }
+
+    double sumA = 0.0, sumX = 0.0, sumY = 0.0;
+    for (int y = std::max(0, y0); y < std::min(h, y0 + dh); ++y)
+    {
+        const int sy = std::clamp(static_cast<int>((y - y0) / scale), 0, _idleImageH - 1);
+        for (int x = std::max(0, x0); x < std::min(w, x0 + dw); ++x)
+        {
+            const int sx = std::clamp(static_cast<int>((x - x0) / scale), 0, _idleImageW - 1);
+            const uint8_t* src = &_idleImage[(static_cast<size_t>(sy) * _idleImageW + sx) * 4];
+            const float a = src[3] / 255.0f;
+            if (a <= 0.0f) { continue; }
+
+            uint8_t* dst = &rgba[(static_cast<size_t>(y) * w + x) * 4];
+            for (int c = 0; c < 3; ++c)
+            {
+                dst[c] = static_cast<uint8_t>(dst[c] * (1.0f - a) + src[c] * a + 0.5f);
+            }
+            dst[3] = src[3];
+
+            sumA += a;
+            sumX += a * (static_cast<double>(x) / std::max(1, w - 1));
+            sumY += a * (1.0 - static_cast<double>(y) / std::max(1, h - 1)); // bottom-up
+        }
+    }
+
+    // Describe the stand-in exactly as if it were a person, so seg_cx/seg_cy/seg_coverage -- and
+    // everything that follows the performer -- follow it. `seg_idle` is what tells a preset it is not
+    // real; these three must not lie, or a preset that opts IN gets a centroid stuck at the origin.
+    if (sumA > 1e-6)
+    {
+        cx = static_cast<float>(sumX / sumA);
+        cy = static_cast<float>(sumY / sumA);
+        coverage = static_cast<float>(sumA / (static_cast<double>(w) * h));
+    }
+    return true;
 }

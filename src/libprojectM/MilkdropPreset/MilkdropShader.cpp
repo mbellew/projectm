@@ -310,6 +310,7 @@ void MilkdropShader::LoadVariables(const PresetState& presetState, const PerFram
     m_shader.SetUniformFloat("seg_vx", presetState.renderContext.segVx);
     m_shader.SetUniformFloat("seg_vy", presetState.renderContext.segVy);
     m_shader.SetUniformFloat("seg_coverage", presetState.renderContext.segCoverage);
+    m_shader.SetUniformFloat("seg_idle", presetState.renderContext.segIdle);
     m_shader.SetUniformFloat("seg_valid", presetState.renderContext.segValid);
 
 

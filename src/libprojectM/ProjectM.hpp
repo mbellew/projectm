@@ -367,6 +367,12 @@ public:
     void VideoSetSegCentroid(float cx, float cy, float coverage);
 
     /**
+     * @brief Marks the current foreground matte as a SYNTHETIC stand-in rather than a real person.
+     * Exposed to presets as seg_idle so they can opt out (see Renderer::RenderContext::segIdle).
+     */
+    void VideoSetSegIdle(bool idle);
+
+    /**
      * @brief Submits the current body-pose skeleton. Safe to call from any thread.
      * @param jointsXYZC Flat array of 4 floats per joint (x, y, z, confidence), indexed by
      *        Renderer::PoseJoint. Camera-native X; the mirror is applied internally.
@@ -468,6 +474,7 @@ private:
     float m_segVx{0.0f};                          //!< Smoothed centroid velocity X (seg_vx), /sec.
     float m_segVy{0.0f};                          //!< Smoothed centroid velocity Y (seg_vy), /sec.
     float m_segCoverage{0.0f};                    //!< Smoothed foreground fraction (seg_coverage).
+    float m_segIdle{0.0f};                        //!< 1 = the matte is a synthetic stand-in (seg_idle).
     float m_segValid{0.0f};                       //!< 1.0 when a confident mask is present (seg_valid).
 
     // Single arbitrated touch point. The app writes the measured values via Touch/TouchDrag/

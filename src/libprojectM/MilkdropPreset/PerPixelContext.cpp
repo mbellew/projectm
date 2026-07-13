@@ -62,6 +62,7 @@ void PerPixelContext::RegisterBuiltinVariables()
     REG_VAR(seg_vx);
     REG_VAR(seg_vy);
     REG_VAR(seg_coverage);
+    REG_VAR(seg_idle);
     REG_VAR(seg_valid);
     REG_VAR(touch_on);
     REG_VAR(touch_x);
@@ -105,6 +106,7 @@ void PerPixelContext::LoadStateReadOnlyVariables(PresetState& state, PerFrameCon
     *seg_vx = static_cast<PRJM_EVAL_F>(state.renderContext.segVx);
     *seg_vy = static_cast<PRJM_EVAL_F>(state.renderContext.segVy);
     *seg_coverage = static_cast<PRJM_EVAL_F>(state.renderContext.segCoverage);
+    *seg_idle = static_cast<PRJM_EVAL_F>(state.renderContext.segIdle);
     *seg_valid = static_cast<PRJM_EVAL_F>(state.renderContext.segValid);
     *touch_on = static_cast<PRJM_EVAL_F>(state.renderContext.touchOn);
     *touch_x = static_cast<PRJM_EVAL_F>(state.renderContext.touchX);
@@ -146,6 +148,7 @@ void PerPixelContext::CopyPerFrameState(const PerPixelContext& source)
     *seg_vx = *source.seg_vx;
     *seg_vy = *source.seg_vy;
     *seg_coverage = *source.seg_coverage;
+    *seg_idle = *source.seg_idle;
     *seg_valid = *source.seg_valid;
     *touch_on = *source.touch_on;
     *touch_x = *source.touch_x;

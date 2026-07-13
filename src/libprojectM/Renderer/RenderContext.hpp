@@ -128,6 +128,12 @@ public:
     float segVx{0.0f};       //!< Centroid velocity X, screen-fractions/sec (seg_vx).
     float segVy{0.0f};       //!< Centroid velocity Y, screen-fractions/sec (seg_vy).
     float segCoverage{0.0f}; //!< Foreground fraction of the frame, [0,1] (seg_coverage).
+    float segIdle{0.0f};     //!< 1 when the "person" is SYNTHETIC -- an idle stand-in injected by the
+                             //!< application because nobody is in frame, not a real performer
+                             //!< (seg_idle). A preset that needs a real body (pose ignition, touch)
+                             //!< should opt out on this; one that just wants something to react to
+                             //!< can ignore it. The matte, seg_cx/cy and seg_coverage all describe
+                             //!< the stand-in as if it were a person, so nothing else has to change.
     float segValid{0.0f};    //!< 1.0 when a confident mask is present, else 0.0 (seg_valid).
 
     // Single arbitrated touch point, exposed to presets as touch_* eval variables. Written by

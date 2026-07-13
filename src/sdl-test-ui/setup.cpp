@@ -370,6 +370,15 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         videoMirror = config.read<bool>("Video Mirror", false);
         audioDevicePrefs = splitPreferenceList(config.read<std::string>("Audio Devices", std::string()));
         app->setVideoDevicePrefs(splitPreferenceList(config.read<std::string>("Video Devices", std::string())));
+
+        // Idle stand-in: when nobody is in front of the camera, inject a drifting image as the
+        // "person" so the visuals still have something to react to. OFF unless "Idle Image" names a
+        // file -- this is a deployment choice (a venue with an unattended screen), not a default.
+        // Presets that need a real body opt out on the preset-readable `seg_idle`.
+        app->setIdleStandIn(config.read<std::string>("Idle Image", std::string()),
+                            config.read<float>("Idle Delay", 5.0f),
+                            config.read<float>("Idle Coverage", 0.02f),
+                            config.read<float>("Idle Scale", 0.25f));
         app->setVideoMaskPref(config.read<std::string>("Video Mask", std::string()));
         app->setVideoSegModel(expandTilde(config.read<std::string>("Video Seg Model", std::string())));
         app->setVideoSegModel2(expandTilde(config.read<std::string>("Video Seg Model 2", std::string())));

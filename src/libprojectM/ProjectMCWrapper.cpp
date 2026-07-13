@@ -568,6 +568,12 @@ void projectm_video_submit_frame_gpu(projectm_handle instance)
     projectMInstance->VideoSubmitFrameGPU();
 }
 
+void projectm_video_set_seg_idle(projectm_handle instance, bool idle)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->VideoSetSegIdle(idle);
+}
+
 void projectm_video_set_chroma_key(projectm_handle instance, float r, float g, float b)
 {
     auto* projectMInstance = handle_to_instance(instance);

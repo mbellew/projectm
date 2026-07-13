@@ -65,6 +65,7 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(seg_vx);
     REG_VAR(seg_vy);
     REG_VAR(seg_coverage);
+    REG_VAR(seg_idle);
     REG_VAR(seg_valid);
     REG_VAR(touch_on);
     REG_VAR(touch_x);
@@ -229,6 +230,7 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *seg_vx = static_cast<PRJM_EVAL_F>(state.renderContext.segVx);
     *seg_vy = static_cast<PRJM_EVAL_F>(state.renderContext.segVy);
     *seg_coverage = static_cast<PRJM_EVAL_F>(state.renderContext.segCoverage);
+    *seg_idle = static_cast<PRJM_EVAL_F>(state.renderContext.segIdle);
     *seg_valid = static_cast<PRJM_EVAL_F>(state.renderContext.segValid);
     *touch_on = static_cast<PRJM_EVAL_F>(state.renderContext.touchOn);
     *touch_x = static_cast<PRJM_EVAL_F>(state.renderContext.touchX);

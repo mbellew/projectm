@@ -56,6 +56,7 @@ uniform float    seg_cy;              // centroid Y, 0 .. 1 (bottom to top)
 uniform float    seg_vx;              // centroid velocity X
 uniform float    seg_vy;              // centroid velocity Y
 uniform float    seg_coverage;        // foreground fraction of the frame, 0 .. 1
+uniform float    seg_idle;             // 1 = the "person" is a synthetic idle stand-in, not a real body
 uniform float    seg_valid;           // 1.0 when a confident mask is present, else 0.0
 
 // note: in general, don't use the current time w/the *dynamic* rotations!
