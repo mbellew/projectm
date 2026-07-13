@@ -52,6 +52,16 @@ public:
     bool Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings = {},
                double targetFps = 0.0, double displayAspect = 0.0);
 
+    /**
+     * Replays frames from disk instead of the camera ($PROJECTM_VIDEO_FILE; Linux only).
+     * @param path A single image, or a directory of images played in filename order, looping.
+     *
+     * The callback contract is identical to the live path, so seg / depth gate / pose all behave as
+     * they would on camera -- but the scene is IDENTICAL every run, which is what makes a change to
+     * the subject gate judgeable. A live camera cannot hold a background figure still across builds.
+     */
+    bool StartFileReplay(const std::string& path, FrameCallback callback, double targetFps);
+
     /** Stops capture and releases the device. */
     void Stop();
 

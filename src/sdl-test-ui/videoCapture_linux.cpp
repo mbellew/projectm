@@ -33,11 +33,15 @@
 #include <atomic>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <memory>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -306,12 +310,110 @@ VideoCapture::~VideoCapture()
     Stop();
 }
 
+// Replay frames from disk in place of the camera (see $PROJECTM_VIDEO_FILE). Loads every frame up
+// front (these are test scenes, not long footage) and pushes them to the callback at targetFps,
+// looping. Frames are emitted in filename order.
+bool VideoCapture::StartFileReplay(const std::string& path, FrameCallback callback, double targetFps)
+{
+    std::vector<std::string> files;
+    std::error_code ec;
+    if (std::filesystem::is_directory(path, ec))
+    {
+        for (const auto& entry : std::filesystem::directory_iterator(path, ec))
+        {
+            if (entry.is_regular_file()) { files.push_back(entry.path().string()); }
+        }
+        std::sort(files.begin(), files.end());
+    }
+    else
+    {
+        files.push_back(path);
+    }
+    if (files.empty()) { return false; }
+
+    // Decode once, to BGRX (the format the V4L2 path hands the callback).
+    struct Frame
+    {
+        std::vector<uint8_t> bgrx;
+        int w{0};
+        int h{0};
+    };
+    auto frames = std::make_shared<std::vector<Frame>>();
+    for (const auto& file : files)
+    {
+        int w = 0, h = 0, ch = 0;
+        stbi_uc* rgb = stbi_load(file.c_str(), &w, &h, &ch, 3);
+        if (rgb == nullptr)
+        {
+            std::fprintf(stderr, "[VideoCapture] Replay: cannot decode %s\n", file.c_str());
+            continue;
+        }
+        Frame f;
+        f.w = w;
+        f.h = h;
+        f.bgrx.resize(static_cast<size_t>(w) * h * 4);
+        for (int i = 0; i < w * h; ++i)
+        {
+            f.bgrx[i * 4 + 0] = rgb[i * 3 + 2]; // B
+            f.bgrx[i * 4 + 1] = rgb[i * 3 + 1]; // G
+            f.bgrx[i * 4 + 2] = rgb[i * 3 + 0]; // R
+            f.bgrx[i * 4 + 3] = 255;
+        }
+        stbi_image_free(rgb);
+        frames->push_back(std::move(f));
+    }
+    if (frames->empty()) { return false; }
+
+    std::fprintf(stderr, "[VideoCapture] Replay: %zu frame(s) from '%s' at %.0f fps (%dx%d).\n",
+                 frames->size(), path.c_str(), targetFps > 0.0 ? targetFps : 30.0,
+                 (*frames)[0].w, (*frames)[0].h);
+
+    m_impl->width = (*frames)[0].w;
+    m_impl->height = (*frames)[0].h;
+    m_impl->callback = std::move(callback);
+    m_impl->running = true;
+
+    const double fps = (targetFps > 0.0) ? targetFps : 30.0;
+    m_impl->worker = std::thread([this, frames, fps]() {
+        Impl* impl = m_impl.get();
+        const auto period = std::chrono::duration<double>(1.0 / fps);
+        size_t idx = 0;
+        while (impl->running.load(std::memory_order_acquire))
+        {
+            const auto next = std::chrono::steady_clock::now() + period;
+            const Frame& f = (*frames)[idx];
+            idx = (idx + 1) % frames->size();
+            if (impl->callback)
+            {
+                impl->callback(f.bgrx.data(), f.w, f.h, VideoCapture::PixelFormat::BGRX);
+            }
+            std::this_thread::sleep_until(next);
+        }
+    });
+    return true;
+}
+
 bool VideoCapture::Start(FrameCallback callback, const std::vector<std::string>& preferredNameSubstrings,
                          double targetFps, double displayAspect)
 {
     if (m_impl->running)
     {
         return false;
+    }
+
+    // $PROJECTM_VIDEO_FILE=<image | directory of images>: replay frames from disk instead of the
+    // camera, at targetFps, looping. Everything downstream (seg, depth gate, pose, the gate's
+    // anchor memory) sees exactly the same callback it gets from V4L2 -- so a staged scene can be
+    // replayed identically across builds. A live camera cannot: judging a change to the subject
+    // gate needs the SAME background figure in the SAME place every run.
+    if (const char* replay = std::getenv("PROJECTM_VIDEO_FILE"); replay != nullptr && replay[0] != '\0')
+    {
+        if (!StartFileReplay(replay, std::move(callback), targetFps))
+        {
+            std::fprintf(stderr, "[VideoCapture] Replay source '%s' unusable.\n", replay);
+            return false;
+        }
+        return true;
     }
 
     std::vector<Device> devices = enumerateDevices();
