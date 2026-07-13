@@ -1355,8 +1355,18 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     //    In practice people who merge are at similar depth (that is why they merged), so the shared
     //    verdict is usually the right one for both. Splitting them needs an instance signal -- the
     //    pose skeletons -- and is deliberately not attempted here.
+    // THE ANCHOR DEFINES THE BAND, SO THE ANCHOR CAN NEVER FALL OUTSIDE IT. The band's origin is the
+    // *smoothed* reference, but a component is judged on its *measured* median -- and the EMA lags.
+    // Step away from the camera quickly and your closeness drops faster than the EMA follows, so the
+    // edge (from the stale, nearer reference) rises above your own measured closeness and the gate
+    // erases the very person it anchored on. Observed live: `anchor=3 refClose=0.42 (raw 0.18),
+    // keep>=0.22; [3:* close=0.18 keep=0.00]` -- the performer, deleted, while two foreground blobs
+    // survived. Clamping the origin to the anchor's measured closeness keeps the EMA's smoothing for
+    // every other component while making that failure structurally impossible: lagging the reference
+    // NEARER can now only make the gate more permissive, never erode the subject.
+    const float bandOrigin = std::min(refClose, refMeasured);
     const float ramp = std::max(0.02f, I.depthBand * 0.4f);
-    const float keepEdge = refClose - I.depthBand;
+    const float keepEdge = bandOrigin - I.depthBand;
     auto keepWeight = [&](float close) {
         const float t = std::clamp((close - (keepEdge - ramp)) / (2.0f * ramp), 0.0f, 1.0f);
         return t * t * (3.0f - 2.0f * t); // ~1 at/nearer than target, ~0 well behind it
@@ -1423,6 +1433,12 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
         const float target = (compClose[k] >= edge) ? 1.0f : 0.0f;
         compW[k] = (prev >= 0.0f) ? (prev + (target - prev) * fadeRate) : target;
     }
+
+    // Belt and braces on the same invariant: the anchor IS the subject. The clamp above already
+    // guarantees it passes the threshold, but on the frame it is elected the fade would still walk
+    // it up from whatever it was before -- so a figure that was correctly faded out and then becomes
+    // the subject would spend a third of a second half-transparent. It is the subject now; keep it.
+    if (anchorK >= 0 && compW[anchorK] >= 0.0f) { compW[anchorK] = 1.0f; }
 
     // Spread each component's verdict onto the unlabeled cells hugging it. A body's silhouette
     // fringe has matte alpha below the foreground threshold, so those cells join no component and
@@ -1545,6 +1561,15 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
 bool SegMasker::HasGate() const
 {
     return !m_impl->cellWeight.empty() && m_impl->gateW > 0 && m_impl->gateH > 0;
+}
+
+bool SegMasker::AnchorCentroid(float& fx, float& fy) const
+{
+    const Impl& I = *m_impl;
+    if (!I.anchorValid) { return false; }
+    fx = I.anchorX;
+    fy = 1.0f - I.anchorY; // stored y-down (grid space); callers use bottom-up
+    return true;
 }
 
 const float* SegMasker::GateGrid(int& gridW, int& gridH) const

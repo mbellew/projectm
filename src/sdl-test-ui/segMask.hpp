@@ -122,6 +122,16 @@ public:
     bool HasGate() const;
 
     /**
+     * Centroid of the depth gate's ANCHOR component -- the figure whose depth sets the keep band,
+     * i.e. the one the gate treats as the primary subject. Note this is only ONE of the system's
+     * three notions of "the subject" (the others being pose's `poses.front()` and the matte
+     * centroid behind seg_cx/seg_cy); they are elected independently and can disagree.
+     * @param fx,fy Normalized, [0,1], fx left->right and fy BOTTOM->top (as SampleDepth/SampleGate).
+     * @return false if no anchor has been elected yet (no gate, or only noise-sized blobs).
+     */
+    bool AnchorCentroid(float& fx, float& fy) const;
+
+    /**
      * The depth gate's per-cell keep weights from the last Process(): [0,1], 1 = keep, row-major,
      * row 0 = top of the frame, in un-mirrored camera space. Hand this to the library
      * (projectm_video_submit_alpha_gate) to have it multiplied into the matte on the GPU.

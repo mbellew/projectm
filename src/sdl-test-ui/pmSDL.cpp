@@ -345,6 +345,47 @@ void projectMSDL::startVideoCapture()
                                         /*mirror=*/false, *outBuf);
                         const auto tSegDone = std::chrono::steady_clock::now();
 
+                        // $PROJECTM_SEG_MARKERS=1: stamp WHO THE SYSTEM THINKS THE SUBJECT IS into
+                        // the frame. There are three independent answers and they can disagree:
+                        //   magenta = the depth gate's ANCHOR (its depth sets the keep band, so this
+                        //             is the figure that decides who else gets erased)
+                        //   cyan    = pose's primary, which is just poses.front() -- the top NMS
+                        //             score, re-picked from scratch every frame
+                        // Alpha is forced opaque so the marker survives a mask-only preset (e.g. the
+                        // green-screen test) even when it lands off the matte -- which is itself the
+                        // tell that the two elections have diverged.
+                        // Pose runs AFTER the submit below, so this holds the PREVIOUS frame's
+                        // detections -- one frame stale, which is irrelevant for a debug marker.
+                        static std::vector<PersonPose> poses;
+
+                        static const bool markers = std::getenv("PROJECTM_SEG_MARKERS") != nullptr;
+                        if (markers)
+                        {
+                            auto stamp = [&](float fx, float fy, uint8_t r, uint8_t g, uint8_t b) {
+                                const int cx = std::clamp(static_cast<int>(fx * (width - 1)), 0, width - 1);
+                                // fy is bottom-up; row 0 is the top of the frame.
+                                const int cy = std::clamp(static_cast<int>((1.0f - fy) * (height - 1)),
+                                                          0, height - 1);
+                                const int half = std::max(4, width / 80);
+                                for (int y = std::max(0, cy - half); y <= std::min(height - 1, cy + half); ++y)
+                                {
+                                    for (int x = std::max(0, cx - half); x <= std::min(width - 1, cx + half); ++x)
+                                    {
+                                        uint8_t* px = outBuf->data() + (static_cast<size_t>(y) * width + x) * 4;
+                                        px[0] = r; px[1] = g; px[2] = b; px[3] = 255;
+                                    }
+                                }
+                            };
+                            float ax = 0.0f, ay = 0.0f;
+                            if (masker->AnchorCentroid(ax, ay)) { stamp(ax, ay, 255, 0, 255); }
+                            if (!poses.empty())
+                            {
+                                const PersonPose& p = poses.front(); // pose's notion of "primary"
+                                stamp(0.5f * (p.boxX0 + p.boxX1), 0.5f * (p.boxY0 + p.boxY1),
+                                      0, 255, 255);
+                            }
+                        }
+
                         projectm_video_submit_frame(handle, outBuf->data(),
                                                     static_cast<unsigned int>(width),
                                                     static_cast<unsigned int>(height),
@@ -364,7 +405,8 @@ void projectMSDL::startVideoCapture()
 
                         // Run body-pose first (if enabled): its torso keypoints give a better
                         // "center" than the matte centroid, and its wrists drive the touch bridge.
-                        static std::vector<PersonPose> poses;
+                        // (`poses` is declared above the submit, so the debug markers can read the
+                        // previous frame's detections.)
                         const auto tPoseStart = std::chrono::steady_clock::now();
                         if (pose)
                         {
