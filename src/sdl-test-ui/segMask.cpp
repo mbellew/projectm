@@ -1192,6 +1192,7 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     const float alphaThresh =
         std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_ALPHA", 0.5f), 0.0f, 1.0f) * 255.0f;
     std::vector<float> cellDepth(gn, 0.0f);
+    std::vector<float> cellClose(gn, 0.0f); // normalized closeness, for the depth-seam test below
     std::vector<char> cellFg(gn, 0);
     for (int gy = 0; gy < gh; ++gy)
     {
@@ -1204,8 +1205,15 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
             const int dx = std::min(mw - 1, static_cast<int>((gx + 0.5f) / gw * mw));
             const int dy = std::min(mh - 1, static_cast<int>((gy + 0.5f) / gh * mh));
             cellDepth[ci] = depth[dy * mw + dx];
+            cellClose[ci] = closeness(cellDepth[ci]);
         }
     }
+
+    // Depth-seam threshold for connectivity (0 = off, the old behaviour: touch = merge). Expressed
+    // in normalized closeness, so it is scale-free like everything else here. Too tight and it fires
+    // inside a body -- monocular depth bleeds across silhouettes and a limb held toward the lens is a
+    // genuine step; too loose and a touching background object still merges. $PROJECTM_SEG_DEPTH_SEAM.
+    const float seam = std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_SEAM", 0.0f), 0.0f, 1.0f);
 
     // 4. Connected components (4-connectivity) over foreground cells; collect each one's depths,
     //    accumulate its centroid (grid coords), and note whether it runs off the LEFT or RIGHT edge
@@ -1245,11 +1253,19 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
                 const int nx = cx + d[0], ny = cy + d[1];
                 if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) { continue; }
                 const int ni = ny * gw + nx;
-                if (cellFg[ni] && I.ccLabel[ni] < 0)
-                {
-                    I.ccLabel[ni] = label;
-                    stack.push_back(ni);
-                }
+                if (!cellFg[ni] || I.ccLabel[ni] >= 0) { continue; }
+                // Depth seam: refuse to flood across a depth DISCONTINUITY. A body's own depth
+                // varies smoothly, so nothing inside it crosses the seam; a background object
+                // merely TOUCHING the body has a step at the contact, and is cut loose into its
+                // own component -- where it gets its own median and is judged on its own merits.
+                // Without this, a touching blob merges into the subject, inherits the subject's
+                // verdict (the subject dominates the median by area) and survives. NOTE this is
+                // deliberately NOT "threshold each cell against its own depth" -- that is the
+                // per-cell rule that sliced bodies in half, and this is not it: the verdict stays
+                // per component, only the CONNECTIVITY becomes depth-aware.
+                if (seam > 0.0f && std::fabs(cellClose[ni] - cellClose[c]) > seam) { continue; }
+                I.ccLabel[ni] = label;
+                stack.push_back(ni);
             }
         }
     }
