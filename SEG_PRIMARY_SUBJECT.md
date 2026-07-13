@@ -61,7 +61,7 @@ That inversion is what makes the dance-floor and missed-detection cases fail *so
 failing *weird*. It also means Stage 1 below is not scaffolding to be thrown away — it is the
 permanent fallback path that the instance layer needs underneath it anyway.
 
-## 4. Stage 1 — component verdicts (DONE, unverified in the field)
+## 4. Stage 1 — component verdicts (DONE, **now verified** — see §10)
 
 No pose. Rewrites the decision half of `ApplyDepthGate`; the depth model, the coarse grid, the
 connected-component pass, the keep-mask grow and the GPU hand-off are unchanged.
@@ -231,3 +231,128 @@ gate down** — do not pretend the instance layer works there.
 | Trimap seeding from pose | RVM does not take a trimap. |
 | Penalizing top/bottom frame contact | The main subject clips top and bottom *by construction*. §4. |
 | Per-person gating in a crowd | §8 — stand the gate down instead. |
+
+
+---
+
+# 10. Validation and what actually shipped (2026-07-13)
+
+Stage 1 was landed "UNVERIFIED against a real multi-person scene". It has now been verified, four
+further defects were found and fixed, and Stage 2's association half is done. Everything below is
+reproducible.
+
+## The rig (this is the load-bearing part)
+
+`PROJECTM_VIDEO_FILE=<image | directory>` (`videoCapture_linux.cpp`) replays frames from disk through
+the *same callback* the camera uses, so seg / depth gate / pose / the anchor's temporal state all
+behave exactly as they do live. **A live camera cannot validate a subject gate**: judging it needs the
+same background figure in the same place across two builds. With the rig, the pre-change gate and the
+post-change gate can be run against identical input and the difference attributed.
+
+Scenes were composited from a real capture of the room (subject cut out with its own matte, rescaled,
+re-pasted with correct ground contact so monocular depth reads them sensibly):
+
+| scene | what it stages |
+|---|---|
+| `A_control` | the subject alone |
+| `B_background_figure` | a smaller figure further back |
+| `C_side_impostor` | a large figure clipped by the LEFT border, nearer than the subject |
+| `D_both` | B + C together |
+| `E_touching_figure` | a background figure visually TOUCHING the subject |
+| `seq_nearfar/` | 2-frame loop: subject near, subject far (forces the refClose EMA to lag) |
+
+`PROJECTM_SEG_MARKERS=1` stamps the two independent elections into the frame: **magenta** = the depth
+gate's anchor, **cyan** = pose's primary. If they land on different people, the mask is keeping one
+person while the paint follows another.
+
+## Stage 1 verified: both original failures were real, and one was catastrophic
+
+- **Side impostor (C).** The OLD gate anchored on the impostor (salience 12145 vs the subject's 10843
+  — raw area is a trump card), set the band from the impostor's depth, and **erased the subject
+  entirely** — only faint feet survived. The new salience (`sqrt(area) x centrality x sideClip`)
+  anchors on the subject (102.9 vs 36.9) and it comes through whole.
+- **Sliced background figure (B).** The OLD gate rendered it with a gradient down the body (head
+  faded, legs bright) — the per-cell thresholding artifact. Per-component verdicts render one uniform
+  answer. Confirmed.
+
+## Four defects found and fixed on top
+
+1. **A dropped body did not go to zero** (`94fa04d1`). It came out at `keep=0.22` — a visible grey
+   ghost — because the component's median was still fed through the soft *spatial* ramp. Verdicts are
+   now decisive, with a Schmitt trigger (a body ON the edge would otherwise flip every frame) and a
+   uniform per-component fade. **The fade must live on the COMPONENT, not the cell grid**: an EMA over
+   the grid would ghost every fast-moving arm as it swept into cells that were previously background.
+   Two further bugs fell out of the same block: the silhouette **fringe voted to save itself** (fringe
+   cells join no component, fall back to the per-cell rule, and monocular depth bleeds *outward* across
+   a silhouette so they read "near" — a dropped figure kept a thin outline of itself), and **`grow`
+   resurrected the outline** (a 4-neighbour MAX pushed a 1 straight back into the body just dropped).
+   Also: components below `minArea` were being **deleted outright** (`keepWeight(-1)` scores as
+   infinitely far), silently erasing e.g. a hand cut off from the body by an occlusion.
+2. **The anchor could be erased by its own band** (`a68bcc88`). The band's origin is the *smoothed*
+   reference but components are judged on their *measured* median, and the EMA lags. Step back from the
+   camera and closeness drops faster than the EMA follows, so the edge rises above the anchor's own
+   closeness and **the gate deletes the person it anchored on**. Observed live:
+   `anchor=3 refClose=0.42 (raw 0.18), keep>=0.22; [3:* close=0.18 keep=0.00]`. Fixed by clamping the
+   origin to `min(EMA, measured)`: the EMA can now only lag *nearer*, which is permissive, never
+   erosive. **Invariant: the anchor defines the band, so the anchor can never fall outside it.**
+3. **Touching blobs merged into the subject** (`6fd52e6e`) — the user-reported failure, reproduced as
+   scene E (`1 comps`, n=14767 = subject 10900 + figure 3300, fused, one verdict, figure survives).
+   Fixed with a **depth seam in the CONNECTIVITY**, not a stricter threshold: the flood fill refuses to
+   cross a depth discontinuity. A body's depth varies smoothly so nothing inside it crosses the seam;
+   an object merely *touching* it has a step at the contact and is cut loose to be judged on its own
+   median. `PROJECTM_SEG_DEPTH_SEAM`, default 0.20, swept over 0.06/0.10/0.15/0.20. **This is NOT the
+   per-cell rule** — the verdict stays per component; only connectivity became depth-aware.
+   *Known residual:* a blob that matches the subject in colour AND sits at their depth (skin on skin)
+   is beyond the gate's reach by construction — RVM merges it into the matte and depth has no
+   discontinuity to find. That needs an instance signal, not a better depth rule.
+4. **The band went negative when the subject was far** (`f056b933`). `band` is an ABSOLUTE slice of a
+   RELATIVE (P05/P95-normalized) coordinate system, so a subject reading 0.19 has less than `band`
+   (0.20) of range behind them: the edge goes negative, everything passes, and **the gate silently
+   stops gating exactly when a performer steps back**. Observed live: `refClose=0.19 ... keep>=-0.01`.
+   Fixed with a proportional floor, which has a physical basis: Depth Anything emits INVERSE depth, so
+   closeness ~ 1/distance and an additive band means a wildly different real-world distance depending
+   on where the subject stands. `keepEdge = max(origin - band, origin * bandFrac)` keeps the additive
+   rule wherever it is well-behaved (every validated scene is bit-identical) and reads as "drop anyone
+   more than 1/bandFrac times farther than the subject" (default 0.5 => twice as far).
+
+## Stage 2, association half: DONE (`afd3c9a3`)
+
+`poses.front()` was the top NMS score, re-elected every frame. It is now **the skeleton that lands on
+the body the gate kept** — each pose scored by its confidence-weighted keypoint overlap with the
+anchor component (`SegMasker::InAnchor`), best fit promoted to the front, so every downstream consumer
+follows. Association only; the gate's election is untouched, so a subject with no skeleton (turned
+away, crouched, occluded) is never penalized — §3 still holds.
+
+**This was not theoretical.** On the live camera, in ~10% of frames YOLO detected two people and NMS
+ranked *first* a phantom with **zero** overlap with the subject (`fit 0.00` vs the subject's 0.90-1.00)
+— most likely the figure in the framed artwork on the wall. The mask kept the performer while the touch
+bridge, and therefore the painting, followed a picture. On scene C the phantom was the side impostor:
+`[Pose] primary <- #1 of 2 (fit 1.00 to the gate's anchor; NMS would have picked #0, fit 0.00)`.
+
+## Two bugs the STATIC rig could not have caught
+
+Both were caught only by running the live camera, and both are worth remembering when trusting a rig:
+
+- **Concave bodies.** The per-component fade first sampled last frame's weight at the component's
+  *centroid* — but a body is routinely concave (arms out, legs apart, a torso around a desk), so the
+  centroid lands in a hole that is not part of the component. The fade then read "was dropped" every
+  frame and **the performer sat at keep=0.30**. The composited scenes all had a convex standing figure
+  and would have shipped it. The incumbent weight is now the MEAN over the component's own cells.
+- **The anchor erasure (defect 2)** needed the subject's depth to change faster than the EMA follows —
+  i.e. motion. It was reproduced afterwards with the `seq_nearfar` loop, but it was *found* live.
+
+## Cost
+
+Depth stage 7.2 -> 7.8 ms (fringe pass + seam). Frame total ~28 ms at 640x480 on the RTX 5060, against
+a 33 ms camera interval. See SEG_MASK_PERF.md.
+
+## Still open
+
+- **Stage 2's feedback half (B):** letting pose *quality* feed back into anchor SELECTION. Deliberately
+  not done. It is a positive feedback loop and it re-opens §3 through the side door: the performer who
+  turns away loses their skeleton exactly when a well-lit spectator keeps theirs, so a naive bonus
+  re-anchors on the spectator. If attempted: pose may only ever ADD (`1 + w*fit`, bounded), never
+  subtract — absence of a skeleton must not be evidence of absence — and each candidate component must
+  be scored by its own best-fitting pose, not the incumbent's, or it locks in.
+- **The three notions of the subject** are now two: the gate's anchor and pose agree. `seg_cx/seg_cy`
+  (the matte centroid) is still elected independently and can still disagree with both.
