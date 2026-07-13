@@ -609,3 +609,23 @@ Cheap route to ~18 ms exists (Q2 + depth 196 + pose cadence) but spends matte cr
    `grow` with staleness or union the grid over recent frames.
 6. **libjpeg-turbo** — only on a 16:9 display, where the camera hands us MJPEG (its YUYV modes top out
    at 640x480) and the stb_image decode sits on the capture thread, outside every number above.
+
+
+---
+
+# Depth-gate work (2026-07-13) — cost impact
+
+The subject-gate correctness work (SEG_PRIMARY_SUBJECT.md §10) touched the depth stage. Net cost:
+**depth 7.2 -> 7.8 ms** (a fringe-inheritance dilation, and a depth-seam test in the connected-component
+pass). Frame total ~28 ms at 640x480 on the RTX 5060, still inside the 33 ms camera interval.
+
+Two tools landed that are useful well beyond that work:
+
+- **`PROJECTM_VIDEO_FILE=<image | directory>`** — replays frames from disk through the same callback as
+  the camera (Linux). Deterministic input for anything whose behaviour depends on the scene: the gate,
+  pose, the touch bridge. A live camera cannot hold a scene still across two builds.
+- **`PROJECTM_SEG_MARKERS=1`** — stamps the system's competing notions of "the subject" into the frame
+  (magenta = depth-gate anchor, cyan = pose primary), so a disagreement between them is visible.
+
+Also note `PROJECTM_ONNX_DUMP` (Finding H) and `PROJECTM_DISPLAY_ASPECT` (Finding C) remain the two
+knobs that made the non-obvious findings in this document findable at all.
