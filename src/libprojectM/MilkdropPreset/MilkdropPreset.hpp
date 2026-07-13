@@ -25,6 +25,7 @@
 
 #include "Border.hpp"
 #include "CustomShape.hpp"
+#include "CustomStroke.hpp"
 #include "CustomWaveform.hpp"
 #include "DarkenCenter.hpp"
 #include "FinalComposite.hpp"
@@ -138,6 +139,7 @@ private:
     Waveform m_waveform;                                                                //!< Preset default waveform.
     std::array<std::unique_ptr<CustomWaveform>, CustomWaveformCount> m_customWaveforms; //!< Custom waveforms in this preset.
     std::array<std::unique_ptr<CustomShape>, CustomShapeCount> m_customShapes;          //!< Custom shapes in this preset.
+    std::array<std::unique_ptr<CustomStroke>, CustomStrokeCount> m_customStrokes;       //!< Custom strokes (Bezier ribbons) in this preset.
     DarkenCenter m_darkenCenter;                                                        //!< Center darkening effect.
     Border m_border;                                                                    //!< Inner/outer borders.
     Renderer::CopyTexture m_flipTexture{GL_RGBA16F, GL_RGBA, GL_FLOAT}; /*FLOATBUF*/                                                //!< Texture flip filter

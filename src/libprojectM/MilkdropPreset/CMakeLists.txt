@@ -47,6 +47,8 @@ add_library(MilkdropPreset OBJECT
         Constants.hpp
         CustomShape.cpp
         CustomShape.hpp
+        CustomStroke.cpp
+        CustomStroke.hpp
         CustomWaveform.cpp
         CustomWaveform.hpp
         DarkenCenter.cpp
@@ -87,6 +89,8 @@ add_library(MilkdropPreset OBJECT
         PresetState.hpp
         ShapePerFrameContext.cpp
         ShapePerFrameContext.hpp
+        StrokePerFrameContext.cpp
+        StrokePerFrameContext.hpp
         ThreadPool.hpp
         VideoEcho.cpp
         VideoEcho.hpp

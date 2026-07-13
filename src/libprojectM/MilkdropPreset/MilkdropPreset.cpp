@@ -184,6 +184,11 @@ void MilkdropPreset::RenderFrame(const libprojectM::Audio::FrameAudioData& audio
     // Draw audio-data-related stuff
     if (m_state.shapesEnabled)
     {
+        for (auto& stroke : m_customStrokes)
+        {
+            stroke->Draw();
+        }
+
         for (auto& shape : m_customShapes)
         {
             shape->Draw();
@@ -373,6 +378,14 @@ void MilkdropPreset::InitializePreset(PresetFileParser& parsedFile)
         m_customShapes[i] = std::move(shape);
     }
 
+    // Custom strokes (cubic-Bezier ribbons):
+    for (int i = 0; i < CustomStrokeCount; i++)
+    {
+        auto stroke = std::make_unique<CustomStroke>(m_state);
+        stroke->Initialize(parsedFile, i);
+        m_customStrokes[i] = std::move(stroke);
+    }
+
     // Preload shaders
     LoadShaderCode();
 }
@@ -397,6 +410,12 @@ void MilkdropPreset::CompileCodeAndRunInitExpressions()
     {
         auto& shape = m_customShapes[i];
         shape->CompileCodeAndRunInitExpressions();
+    }
+
+    for (int i = 0; i < CustomStrokeCount; i++)
+    {
+        auto& stroke = m_customStrokes[i];
+        stroke->CompileCodeAndRunInitExpressions();
     }
 }
 
