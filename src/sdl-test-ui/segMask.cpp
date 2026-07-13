@@ -242,8 +242,8 @@ struct SegMasker::Impl
     // --- Monocular depth gate (see LoadDepth / ApplyDepthGate) ----------------------------------
     // Optional Depth Anything V2 session. When present, after the matte is built we run depth on
     // the same frame, split the matte into connected components, take each component's median
-    // relative depth, and zero the alpha of components sitting far behind the nearest one --
-    // removing background spectators while keeping everyone up front. Its own session (shares the
+    // relative depth, and fade the alpha of components sitting far behind the anchor -- removing
+    // background spectators while keeping everyone up front. Its own session (shares the
     // GPU EP via MakeSessionOptions); no IoBinding, no recurrent state -- a plain single-shot run.
     std::unique_ptr<Ort::Session> depthSession;
     std::vector<std::string> depthInNames;
@@ -255,12 +255,22 @@ struct SegMasker::Impl
     bool depthInvert{false};            // false: larger model output = closer (Depth Anything default)
     std::vector<float> depthInput;      // CHW input scratch (pixel_values)
     std::vector<float> depthMap;        // HxW relative depth (copied out of the model)
+    std::vector<float> depthSortScratch; // strided depth samples, partially sorted for P05/P95
     int depthMapW{0};
     int depthMapH{0};
     std::vector<int> ccLabel;           // connected-component label per grid cell (-1 = background)
     std::vector<float> cellWeight;      // per-grid-cell keep weight (1 = keep, 0 = drop)
     int gateW{0};                       // cellWeight grid dims; the grid is handed to the library,
     int gateH{0};                       // which multiplies it into the matte on the GPU.
+
+    // Anchor memory. Without it the anchor is re-elected from scratch every frame, so two comparable
+    // figures trade the reference back and forth and the whole keep band jumps with them. We remember
+    // where the anchor was (normalized frame coords) and how close it was, prefer the component that
+    // continues it, and EMA the reference so even a legitimate hand-off glides instead of cutting.
+    bool anchorValid{false};
+    float anchorX{0.5f};                // last anchor centroid, normalized [0,1] (grid space, y-down)
+    float anchorY{0.5f};
+    float refCloseEma{0.0f};            // smoothed reference closeness (the keep band's origin)
 
     SegTimings timings{}; //!< Per-stage cost of the last Process() (see SEG_MASK_PERF.md).
 
@@ -1068,12 +1078,23 @@ void SegMasker::HardenAlpha(int w, int h, std::vector<uint8_t>& outRGBA)
     }
 }
 
+// Anchor stickiness (step 5). The incumbent anchor's score is multiplied by up to
+// (1 + kAnchorStickiness) -- so a challenger must beat it by ~40% to take the reference, rather than
+// merely tie and swap on noise. The bonus decays over kAnchorStickyRadius (in normalized frame
+// widths), so a subject who moves keeps it and a subject who is genuinely replaced does not.
+constexpr float kAnchorStickiness{0.4f};
+constexpr float kAnchorStickyRadius{0.25f};
+// EMA rate for the reference closeness. ~0.15/frame at 30fps => a hand-off settles in ~0.3s: fast
+// enough to follow the subject, slow enough that a re-anchor reads as a refocus, not a cut.
+constexpr float kRefCloseRate{0.15f};
+
 // Monocular depth gate: run the depth model on the just-built RGB frame, split the matte into
 // connected components, measure each component's median relative depth, and fade out the alpha of
-// components sitting far behind the nearest one. The whole decision is made on a coarse grid (so a
-// per-pixel-noisy depth map still yields a stable per-person verdict) and applied back to the
-// full-res alpha through a bilinearly-sampled weight grid, which feathers the cut. Relative depth
-// is sufficient -- we only rank components, never use metric distance. See LoadDepth.
+// components sitting far behind the anchor. The whole decision is made on a coarse grid (so a
+// per-pixel-noisy depth map still yields a stable per-person verdict), taken PER COMPONENT so a body
+// is kept or dropped whole, and applied back to the full-res alpha through a bilinearly-sampled
+// weight grid, which feathers the cut. Relative depth is sufficient -- we only rank components,
+// never use metric distance. See LoadDepth.
 void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
 {
     auto& I = *m_impl;
@@ -1121,17 +1142,31 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     I.depthMapH = mh;
 
     // Scene depth span, used to normalize closeness to [0,1] (1 = nearest). Scale-free, so no
-    // calibration: the keep band is a fraction of the full near-to-far spread of the frame.
-    float dmin = depth[0], dmax = depth[0];
+    // calibration: the keep band is a fraction of the near-to-far spread of the frame.
+    //
+    // Robust percentiles (P05/P95), NOT min/max: the extremes are single pixels, so a hand reaching
+    // toward the lens or a doorway opening onto a deep hallway rescales the whole frame's closeness
+    // and every downstream threshold -- including `refClose - band` -- wobbles even when nobody has
+    // moved. Percentiles make the coordinate system itself stable, which is worth more than any
+    // amount of smoothing applied on top of a jittering one. Sampled on a stride: we want the shape
+    // of the depth histogram, and every 4th pixel describes it identically for 1/16th the sort.
     const int dn = mw * mh;
-    for (int i = 1; i < dn; ++i)
-    {
-        dmin = std::min(dmin, depth[i]);
-        dmax = std::max(dmax, depth[i]);
-    }
+    std::vector<float>& sorted = I.depthSortScratch;
+    sorted.clear();
+    sorted.reserve(static_cast<size_t>(dn) / 16 + 1);
+    for (int i = 0; i < dn; i += 16) { sorted.push_back(depth[i]); }
+    const size_t lo5 = sorted.size() / 20;                     // P05
+    const size_t hi95 = sorted.size() - 1 - sorted.size() / 20; // P95
+    std::nth_element(sorted.begin(), sorted.begin() + lo5, sorted.end());
+    const float dmin = sorted[lo5];
+    std::nth_element(sorted.begin() + lo5, sorted.begin() + hi95, sorted.end());
+    const float dmax = sorted[hi95];
     const float drange = (dmax - dmin) > 1e-6f ? (dmax - dmin) : 1.0f;
+    // Clamped: pixels outside the percentile range (the nearest hand, the far hallway) saturate to
+    // 1/0 rather than running past the ends and distorting a median.
     auto closeness = [&](float v) {
-        return I.depthInvert ? (dmax - v) / drange : (v - dmin) / drange;
+        const float t = I.depthInvert ? (dmax - v) / drange : (v - dmin) / drange;
+        return std::clamp(t, 0.0f, 1.0f);
     };
 
     // Retain the full-resolution closeness map so callers can sample depth at an arbitrary point
@@ -1169,10 +1204,12 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
         }
     }
 
-    // 4. Connected components (4-connectivity) over foreground cells; collect each one's depths
-    //    and accumulate its centroid (grid coords) so step 5 can weigh size and centrality.
+    // 4. Connected components (4-connectivity) over foreground cells; collect each one's depths,
+    //    accumulate its centroid (grid coords), and note whether it runs off the LEFT or RIGHT edge
+    //    of the frame -- step 5 weighs size, centrality and that side-clipping.
     std::vector<std::vector<float>> compDepths;
     std::vector<double> compSumX, compSumY; // centroid accumulators, parallel to compDepths
+    std::vector<char> compSideClipped;      // component reaches the left or right frame border
     std::vector<int> stack;
     for (int s = 0; s < gn; ++s)
     {
@@ -1181,6 +1218,7 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
         compDepths.emplace_back();
         compSumX.push_back(0.0);
         compSumY.push_back(0.0);
+        compSideClipped.push_back(0);
         stack.clear();
         stack.push_back(s);
         I.ccLabel[s] = label;
@@ -1192,6 +1230,12 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
             const int cx = c % gw, cy = c / gw;
             compSumX[label] += cx;
             compSumY[label] += cy;
+            // Only the SIDE borders count as truncation. People are vertical and the frame is
+            // horizontal, so the main subject routinely runs off the top (head/hair) and the bottom
+            // (feet) -- penalizing that would punish exactly the figure we want to anchor on. The
+            // impostor this guards against -- a close body half-out of shot -- enters from the left
+            // or the right.
+            if (cx == 0 || cx == gw - 1) { compSideClipped[label] = 1; }
             const int nb[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
             for (const auto& d : nb)
             {
@@ -1211,55 +1255,114 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     // 5. Reference depth = the closeness of the *anchor* component -- the main subject. Rather than
     //    simply taking the nearest blob (which lets a partial figure clipping the screen edge, even
     //    one only slightly closer, steal the reference and push the real subject behind the keep
-    //    band), we score each sizable component by salience = area x centrality and anchor on the
-    //    winner. A reasonably large, centred figure therefore outranks a small edge fragment even
-    //    when the fragment is nearer; because the keep band still spares everything in front of the
-    //    anchor (step 6), that nearer fragment is itself kept -- we only stop it from hijacking the
-    //    band. Using each component's median depth keeps the reference robust to stray near specks.
-    //    Components smaller than minArea are ignored as noise/fragments.
+    //    band), we score each sizable component and anchor on the winner. Because the keep band
+    //    still spares everything in front of the anchor (step 6), a nearer fragment is itself kept --
+    //    we only stop it from hijacking the band. Each component's *median* depth keeps the
+    //    reference robust to stray near specks. Components smaller than minArea are ignored as
+    //    noise, but they still get a verdict in step 6.
+    //
+    //        salience = sqrt(area) x centrality x (sideClipped ? sideClipPenalty : 1)
+    //
+    //    sqrt(area), not area: apparent size grows with the square of nearness, so raw area lets a
+    //    body looming at the lens outweigh a whole centred figure on bulk alone -- the same
+    //    pathology the centrality term exists to fight. The square root makes size evidence, not a
+    //    trump card.
     const int minArea = std::max(1, EnvInt("PROJECTM_SEG_DEPTH_MINAREA", std::max(4, gn / 400)));
     // Centrality strength: how steeply salience falls off toward the frame edge. 0 disables it
     // (pure largest-blob anchoring); larger values favour the middle of the screen more strongly.
     const float centerBias = std::max(0.0f, EnvFloat("PROJECTM_SEG_DEPTH_CENTER", 1.0f));
+    // Multiplier applied to a component that runs off the left or right border (see the CC pass).
+    // 1.0 disables the penalty.
+    const float sideClipPenalty =
+        std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_SIDECLIP", 0.4f), 0.0f, 1.0f);
     const float cx0 = 0.5f * (gw - 1), cy0 = 0.5f * (gh - 1);
     const float halfDiag = std::max(1.0f, std::sqrt(cx0 * cx0 + cy0 * cy0));
-    std::vector<float> compClose(compDepths.size(), -1.0f); // kept for the debug log
-    std::vector<float> compSal(compDepths.size(), -1.0f);   // kept for the debug log
-    float refClose = -1.0f;
+    const size_t nComp = compDepths.size();
+    std::vector<float> compClose(nComp, -1.0f); // median closeness -- EVERY component gets one
+    std::vector<float> compSal(nComp, -1.0f);   // -1 = too small to anchor (still gets a verdict)
     int anchorK = -1;
-    float bestSalience = -1.0f;
-    for (size_t k = 0; k < compDepths.size(); ++k)
+    float bestScore = -1.0f;
+    for (size_t k = 0; k < nComp; ++k)
     {
         auto& v = compDepths[k];
         const int area = static_cast<int>(v.size());
-        if (area < minArea) { continue; }
         std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
-        const float cl = closeness(v[v.size() / 2]);
-        compClose[k] = cl;
+        compClose[k] = closeness(v[v.size() / 2]);
+        if (area < minArea) { continue; } // noise: gets a verdict below, but never the anchor
+
         // Centroid distance from frame centre, normalized to [0,1] (0 = dead centre, 1 = corner).
         const float ccx = static_cast<float>(compSumX[k] / area);
         const float ccy = static_cast<float>(compSumY[k] / area);
         const float r = std::sqrt((ccx - cx0) * (ccx - cx0) + (ccy - cy0) * (ccy - cy0)) / halfDiag;
         const float centrality = 1.0f / (1.0f + centerBias * r * r);
-        const float salience = static_cast<float>(area) * centrality;
+        float salience = std::sqrt(static_cast<float>(area)) * centrality;
+        if (compSideClipped[k]) { salience *= sideClipPenalty; }
         compSal[k] = salience;
-        if (salience > bestSalience) { bestSalience = salience; refClose = cl; anchorK = static_cast<int>(k); }
+
+        // Anchor stickiness: bias toward whichever component continues last frame's anchor, so a
+        // challenger has to clearly win rather than merely tie. Without this the anchor swaps
+        // between two comparable figures on depth noise alone and the entire keep band lurches with
+        // it. The incumbent bonus decays with distance from where the anchor was, so a subject who
+        // walks is still followed; one who is replaced is not.
+        float score = salience;
+        if (I.anchorValid)
+        {
+            const float nx = (gw > 1) ? ccx / (gw - 1) : 0.5f;
+            const float ny = (gh > 1) ? ccy / (gh - 1) : 0.5f;
+            const float dx = nx - I.anchorX, dy = ny - I.anchorY;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            score *= 1.0f + kAnchorStickiness * std::exp(-dist / kAnchorStickyRadius);
+        }
+        if (score > bestScore) { bestScore = score; anchorK = static_cast<int>(k); }
     }
-    if (refClose < 0.0f) { return; } // only noise-sized blobs -> leave the matte unchanged
+    if (anchorK < 0) { return; } // only noise-sized blobs -> leave the matte unchanged
+
+    // Smooth the reference itself. Even a legitimate hand-off (the subject leaves, someone else
+    // becomes primary) then re-focuses over ~a third of a second instead of cutting, and residual
+    // per-frame depth noise in the anchor's median stops propagating into every component's verdict.
+    const float refMeasured = compClose[anchorK];
+    if (!I.anchorValid) { I.refCloseEma = refMeasured; }
+    else                { I.refCloseEma += (refMeasured - I.refCloseEma) * kRefCloseRate; }
+    const float refClose = I.refCloseEma;
+    {
+        const int area = static_cast<int>(compDepths[anchorK].size());
+        const float ax = static_cast<float>(compSumX[anchorK] / area);
+        const float ay = static_cast<float>(compSumY[anchorK] / area);
+        I.anchorX = (gw > 1) ? ax / (gw - 1) : 0.5f;
+        I.anchorY = (gh > 1) ? ay / (gh - 1) : 0.5f;
+        I.anchorValid = true;
+    }
 
     // 6. Build a KEEP mask from depth, grow it, then AND it with the matte. Working from "what to
     //    save" rather than "what to cut" is what guarantees the foreground figure is never eroded.
-    //    A cell is seeded into the keep mask when it sits at, or nearer than, the target depth
-    //    (refClose - band) -- so the subject and anything in front of it are kept, only things
-    //    farther are candidates for removal.
+    //    A cell is kept when it sits at, or nearer than, the target depth (refClose - band) -- so
+    //    the subject and anything in front of it are kept, only things farther are candidates for
+    //    removal.
+    //
+    //    The verdict is taken PER COMPONENT, not per cell: every cell of component k is weighed by
+    //    that component's *median* closeness. Thresholding each cell against its own depth is what
+    //    made a background figure come out sliced -- a body lying across the band edge (a slight
+    //    depth gradient, or just monocular-depth noise across a torso) had some cells above the
+    //    threshold and some below, so half of them survived. A person is one object and gets one
+    //    answer. Cells in no component (background, and the soft matte fringe just outside a body)
+    //    fall back to their own depth; they only matter under the fringe, where the grow below and
+    //    the AND with the matte alpha decide the edge anyway.
+    //
+    //    Known limit: two people MERGED into one component by a touch or an overlap share a verdict.
+    //    In practice people who merge are at similar depth (that is why they merged), so the shared
+    //    verdict is usually the right one for both. Splitting them needs an instance signal -- the
+    //    pose skeletons -- and is deliberately not attempted here.
     const float ramp = std::max(0.02f, I.depthBand * 0.4f);
     const float keepEdge = refClose - I.depthBand;
+    auto keepWeight = [&](float close) {
+        const float t = std::clamp((close - (keepEdge - ramp)) / (2.0f * ramp), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t); // ~1 at/nearer than target, ~0 well behind it
+    };
     std::vector<float> keep(gn, 0.0f);
     for (int c = 0; c < gn; ++c)
     {
-        const float t = std::clamp((closeness(cellDepth[c]) - (keepEdge - ramp)) / (2.0f * ramp),
-                                   0.0f, 1.0f);
-        keep[c] = t * t * (3.0f - 2.0f * t); // ~1 at/nearer than target, ~0 well behind it
+        const int k = I.ccLabel[c];
+        keep[c] = (k >= 0) ? keepWeight(compClose[k]) : keepWeight(closeness(cellDepth[c]));
     }
 
     // Grow the keep region a few cells (4-neighbour max). This is the crucial step: monocular depth
@@ -1287,28 +1390,32 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     for (int c = 0; c < gn; ++c) { I.cellWeight[c] = keep[c]; }
 
     // Optional tuning diagnostic ($PROJECTM_SEG_DEPTH_DEBUG=1): every ~60 frames, report the
-    // reference closeness, the keep cutoff, and each sizable component's median closeness. The
-    // main subject sets refClose; components well below the cutoff are the ones being faded. If the
-    // *nearest* component is the one cut, the depth orientation is flipped -- set
-    // PROJECTM_SEG_DEPTH_INVERT=1.
+    // reference closeness, the keep cutoff, and every anchor-eligible component -- its median
+    // closeness, its salience, whether it is side-clipped (`|`), and the keep weight it was given.
+    // The anchor (`*`) sets refClose; components whose keep is near 0 are the ones being faded. If
+    // the *nearest* component is the one cut, the depth orientation is flipped -- set
+    // PROJECTM_SEG_DEPTH_INVERT=1. A component whose keep is neither ~0 nor ~1 is sitting on the
+    // band edge and will be the one that flickers.
     if (EnvInt("PROJECTM_SEG_DEPTH_DEBUG", 0) != 0)
     {
         static int dbgFrame = 0;
         if ((dbgFrame++ % 60) == 0)
         {
             std::string s;
-            for (size_t k = 0; k < compDepths.size() && k < 12; ++k)
+            for (size_t k = 0; k < nComp && k < 12; ++k)
             {
-                if (compClose[k] < 0.0f) { continue; } // skip tiny/ignored
-                char buf[72];
-                std::snprintf(buf, sizeof(buf), " [%zu:%s close=%.2f sal=%.0f n=%zu]", k,
-                              (static_cast<int>(k) == anchorK ? "*" : ""), compClose[k], compSal[k],
-                              compDepths[k].size());
+                if (compSal[k] < 0.0f) { continue; } // below minArea: never anchors
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), " [%zu:%s%s close=%.2f sal=%.1f keep=%.2f n=%zu]", k,
+                              (static_cast<int>(k) == anchorK ? "*" : ""),
+                              (compSideClipped[k] ? "|" : ""), compClose[k], compSal[k],
+                              keepWeight(compClose[k]), compDepths[k].size());
                 s += buf;
             }
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                        "[SegMasker] depth gate: %zu comps, anchor=%d refClose=%.2f, keep>=%.2f;%s",
-                        compDepths.size(), anchorK, refClose, refClose - I.depthBand, s.c_str());
+                        "[SegMasker] depth gate: %zu comps, anchor=%d refClose=%.2f (raw %.2f), "
+                        "keep>=%.2f;%s",
+                        nComp, anchorK, refClose, refMeasured, keepEdge, s.c_str());
         }
     }
 
