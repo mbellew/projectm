@@ -132,6 +132,23 @@ public:
     bool AnchorCentroid(float& fx, float& fy) const;
 
     /**
+     * True when the given point lies on the depth gate's ANCHOR component -- i.e. on the body the
+     * gate treats as the primary subject.
+     *
+     * Exists so a caller can decide which of several pose skeletons belongs to the subject the mask
+     * actually keeps, instead of guessing with `poses.front()` (the top NMS score, re-elected from
+     * scratch every frame, which flips between two similarly-scored people). Association only: the
+     * gate's own election is unaffected, so a subject who loses their skeleton -- turned away,
+     * crouched, occluded -- is not penalized. (Pose must never be the gate's foundation; the person
+     * most likely to be dropped is the person least likely to have a skeleton. See
+     * SEG_PRIMARY_SUBJECT.md §3.)
+     *
+     * @param fx,fy Normalized, [0,1], fx left->right and fy BOTTOM->top (as SampleDepth/SampleGate).
+     * @return false when there is no gate, or no anchor was elected this frame.
+     */
+    bool InAnchor(float fx, float fy) const;
+
+    /**
      * The depth gate's per-cell keep weights from the last Process(): [0,1], 1 = keep, row-major,
      * row 0 = top of the frame, in un-mirrored camera space. Hand this to the library
      * (projectm_video_submit_alpha_gate) to have it multiplied into the matte on the GPU.

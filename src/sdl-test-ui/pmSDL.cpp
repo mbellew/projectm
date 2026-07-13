@@ -429,6 +429,58 @@ void projectMSDL::startVideoCapture()
                         {
                             poses.clear();
                         }
+
+                        // Make the PRIMARY pose the skeleton that belongs to the body the gate kept.
+                        //
+                        // Everything downstream takes poses.front() as "the performer", and until now
+                        // that was just the top NMS score -- re-elected from scratch every frame, so
+                        // two similarly-scored people flipped the whole skeleton (and with it the
+                        // touch bridge, and the painting) back and forth between them. Meanwhile the
+                        // depth gate had already decided, with depth and salience and hysteresis,
+                        // whose body survives in the matte. Those two answers could simply disagree:
+                        // the mask kept you and the paint followed someone behind you.
+                        //
+                        // So score each skeleton by how much of it lands on the anchor component --
+                        // confidence-weighted, since a keypoint we barely believe should barely vote
+                        // -- and promote the best fit to the front. This is ASSOCIATION, not
+                        // election: the gate still chooses the subject on its own evidence. A subject
+                        // with no skeleton at all (turned away, crouched, occluded) is unaffected --
+                        // we simply have no pose to promote, and fall back to the NMS order.
+                        if (poses.size() > 1 && masker->HasGate())
+                        {
+                            auto fitToAnchor = [&](const PersonPose& p) {
+                                float on = 0.0f, total = 0.0f;
+                                for (const auto& kp : p.kpts)
+                                {
+                                    if (kp.conf < 0.2f) { continue; } // too uncertain to vote
+                                    total += kp.conf;
+                                    if (masker->InAnchor(kp.x, kp.y)) { on += kp.conf; }
+                                }
+                                return (total > 0.0f) ? (on / total) : 0.0f;
+                            };
+                            size_t best = 0;
+                            float bestFit = fitToAnchor(poses[0]);
+                            for (size_t i = 1; i < poses.size(); ++i)
+                            {
+                                const float fit = fitToAnchor(poses[i]);
+                                if (fit > bestFit) { bestFit = fit; best = i; }
+                            }
+                            // Only override the NMS order on real evidence. If no skeleton overlaps
+                            // the anchor (the subject has no pose this frame), leave the order alone
+                            // rather than promoting an unrelated person on a tie of zeros.
+                            if (best != 0 && bestFit > 0.34f)
+                            {
+                                std::swap(poses[0], poses[best]);
+                                if (markers)
+                                {
+                                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                                "[Pose] primary <- #%zu of %zu (fit %.2f to the gate's "
+                                                "anchor; NMS would have picked #0, fit %.2f)",
+                                                best, poses.size(), bestFit, fitToAnchor(poses[best]));
+                                }
+                            }
+                        }
+
                         const double poseMs = std::chrono::duration<double, std::milli>(
                                                   std::chrono::steady_clock::now() - tPoseStart)
                                                   .count();

@@ -273,6 +273,9 @@ struct SegMasker::Impl
     bool anchorValid{false};
     float anchorX{0.5f};                // last anchor centroid, normalized [0,1] (grid space, y-down)
     float anchorY{0.5f};
+    int anchorLabel{-1};                // ccLabel of the anchor component this frame (-1 = none).
+                                        // Lets a caller ask "is this point on the primary subject?"
+                                        // -- e.g. to pick the pose skeleton that belongs to them.
     float refCloseEma{0.0f};            // smoothed reference closeness (the keep band's origin)
 
     SegTimings timings{}; //!< Per-stage cost of the last Process() (see SEG_MASK_PERF.md).
@@ -1101,6 +1104,10 @@ constexpr float kRefCloseRate{0.15f};
 void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
 {
     auto& I = *m_impl;
+    // Invalidate the anchor label up front: several paths below bail out before the component pass
+    // re-labels the grid, and a stale label indexed into a stale ccLabel would answer InAnchor()
+    // confidently and wrongly.
+    I.anchorLabel = -1;
     if (!I.depthSession || w <= 0 || h <= 0) { return; }
 
     // 1. Depth input dims: aspect-matched to the frame, each snapped to a multiple of 14 (DINOv2
@@ -1209,11 +1216,13 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
         }
     }
 
-    // Depth-seam threshold for connectivity (0 = off, the old behaviour: touch = merge). Expressed
-    // in normalized closeness, so it is scale-free like everything else here. Too tight and it fires
-    // inside a body -- monocular depth bleeds across silhouettes and a limb held toward the lens is a
-    // genuine step; too loose and a touching background object still merges. $PROJECTM_SEG_DEPTH_SEAM.
-    const float seam = std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_SEAM", 0.0f), 0.0f, 1.0f);
+    // Depth-seam threshold for connectivity. Set 0 to disable (the old behaviour: touch = merge).
+    // Expressed in normalized closeness, so it is scale-free like everything else here. Too tight and
+    // it fires inside a body -- monocular depth bleeds across silhouettes, and a limb held toward the
+    // lens is a genuine step; too loose and a touching background object still merges. 0.20 was swept
+    // over the scene rig (0.06 / 0.10 / 0.15 / 0.20) and confirmed live: the touching figure is cut
+    // loose, and limbs stay intact through reaching, turning side-on and walking.
+    const float seam = std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_SEAM", 0.20f), 0.0f, 1.0f);
 
     // 4. Connected components (4-connectivity) over foreground cells; collect each one's depths,
     //    accumulate its centroid (grid coords), and note whether it runs off the LEFT or RIGHT edge
@@ -1350,6 +1359,7 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
         I.anchorX = (gw > 1) ? ax / (gw - 1) : 0.5f;
         I.anchorY = (gh > 1) ? ay / (gh - 1) : 0.5f;
         I.anchorValid = true;
+        I.anchorLabel = anchorK; // valid against this frame's ccLabel (see InAnchor)
     }
 
     // 6. Build a KEEP mask from depth, grow it, then AND it with the matte. Working from "what to
@@ -1595,6 +1605,17 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
 bool SegMasker::HasGate() const
 {
     return !m_impl->cellWeight.empty() && m_impl->gateW > 0 && m_impl->gateH > 0;
+}
+
+bool SegMasker::InAnchor(float fx, float fy) const
+{
+    const Impl& I = *m_impl;
+    if (I.anchorLabel < 0 || I.gateW <= 0 || I.gateH <= 0) { return false; }
+    if (I.ccLabel.size() != static_cast<size_t>(I.gateW) * static_cast<size_t>(I.gateH)) { return false; }
+    // fy is bottom-up; the grid's row 0 is the top of the frame.
+    const int gx = std::clamp(static_cast<int>(std::clamp(fx, 0.0f, 1.0f) * I.gateW), 0, I.gateW - 1);
+    const int gy = std::clamp(static_cast<int>(std::clamp(1.0f - fy, 0.0f, 1.0f) * I.gateH), 0, I.gateH - 1);
+    return I.ccLabel[gy * I.gateW + gx] == I.anchorLabel;
 }
 
 bool SegMasker::AnchorCentroid(float& fx, float& fy) const
