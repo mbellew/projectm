@@ -260,6 +260,9 @@ struct SegMasker::Impl
     int depthMapH{0};
     std::vector<int> ccLabel;           // connected-component label per grid cell (-1 = background)
     std::vector<float> cellWeight;      // per-grid-cell keep weight (1 = keep, 0 = drop)
+    std::vector<float> dilateScratch;   // scratch for the 4-neighbour dilations (fringe + grow)
+    std::vector<float> prevCellWeight;  // last frame's cellWeight: the component verdict's memory
+                                        // (hysteresis + fade; sampled at component centroids)
     int gateW{0};                       // cellWeight grid dims; the grid is handed to the library,
     int gateH{0};                       // which multiplies it into the matte on the GPU.
 
@@ -1358,11 +1361,104 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
         const float t = std::clamp((close - (keepEdge - ramp)) / (2.0f * ramp), 0.0f, 1.0f);
         return t * t * (3.0f - 2.0f * t); // ~1 at/nearer than target, ~0 well behind it
     };
-    std::vector<float> keep(gn, 0.0f);
+
+    // A component's verdict is DECISIVE, not soft. Feeding a component's median through the ramp
+    // above leaves a body that straddles the band edge at a partial alpha -- measured: a background
+    // figure 0.03 past the edge came out at keep=0.22, a plainly visible grey ghost. That ramp is
+    // spatial feathering, which made sense when the verdict was per cell; it is meaningless applied
+    // to "is this person in front or behind", and the edge is feathered anyway by the grow below,
+    // the bilinear sampling of this grid, and the AND with the full-res matte. So a body is in or
+    // out, with two guards:
+    //
+    //  - Hysteresis (Schmitt trigger). A body sitting ON the edge would otherwise flip every frame
+    //    as its median wanders. An incumbent keeps its verdict until the median clears the edge by
+    //    `hyst` in the other direction. Component identity across frames is approximated by sampling
+    //    last frame's weight at the component's centroid -- cheap, and a centroid lands well inside
+    //    the body, where the grow does not perturb the value.
+    //  - Uniform fade. Flipping 0<->1 in one frame pops. Each component eases toward its target,
+    //    and because the whole component carries ONE value, a limb moving into newly-covered cells
+    //    inherits the body's current weight immediately -- it does not fade in separately. (This is
+    //    why the fade must live on the component and NOT on the cell grid: an EMA over the grid
+    //    would ghost every fast-moving arm as it swept into cells that were previously background.)
+    const float hyst = std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_HYST", 0.04f), 0.0f, 0.5f);
+    const float fadeRate = std::clamp(EnvFloat("PROJECTM_SEG_DEPTH_FADE", 0.30f), 0.05f, 1.0f);
+    const bool havePrev = I.prevCellWeight.size() == static_cast<size_t>(gn);
+
+    // The incumbent weight of a component is the MEAN of last frame's weight over the component's
+    // OWN cells. Do NOT sample it at the component's centroid: a body is routinely concave -- arms
+    // out, legs apart, a torso wrapped around a desk -- so its centroid can land in a hole that is
+    // not part of the component at all. That cell never carries the body's verdict, the fade reads
+    // "was dropped" every frame, and the weight sticks partway instead of converging. Measured live
+    // on a seated subject: the anchor -- the performer themselves -- sat at keep=0.30.
+    std::vector<double> prevSum(nComp, 0.0);
+    std::vector<int> prevCount(nComp, 0);
+    if (havePrev)
+    {
+        for (int c = 0; c < gn; ++c)
+        {
+            const int k = I.ccLabel[c];
+            if (k >= 0)
+            {
+                prevSum[k] += I.prevCellWeight[c];
+                prevCount[k] += 1;
+            }
+        }
+    }
+
+    std::vector<float> compW(nComp, -1.0f); // -1 = no component verdict; use the per-cell rule
+    for (size_t k = 0; k < nComp; ++k)
+    {
+        // Below minArea there is no reliable median (compClose stays -1), so such a component gets
+        // no verdict and its cells fall back to their own depth. Handing -1 to keepWeight() would
+        // score it as infinitely far and delete it outright -- which would silently erase a small
+        // detached blob, e.g. a hand cut off from the body by an occlusion.
+        if (compClose[k] < 0.0f) { continue; }
+
+        const float prev = (prevCount[k] > 0)
+                               ? static_cast<float>(prevSum[k] / prevCount[k])
+                               : -1.0f;
+
+        const bool wasKept = (prev >= 0.0f) ? (prev > 0.5f) : (compClose[k] >= keepEdge);
+        const float edge = wasKept ? (keepEdge - hyst) : (keepEdge + hyst);
+        const float target = (compClose[k] >= edge) ? 1.0f : 0.0f;
+        compW[k] = (prev >= 0.0f) ? (prev + (target - prev) * fadeRate) : target;
+    }
+
+    // Spread each component's verdict onto the unlabeled cells hugging it. A body's silhouette
+    // fringe has matte alpha below the foreground threshold, so those cells join no component and
+    // fall back to the per-cell rule -- and monocular depth BLEEDS outward across a silhouette, so
+    // they read "near" and are kept. That is why a fully-dropped figure still left a thin outline of
+    // itself: its own halo was voting independently and voting to stay. A cell caught between two
+    // bodies takes the MAX verdict, so a fringe shared with the subject always defers to keeping the
+    // subject -- the gate must never erode the person it anchored on.
+    const int fringe = std::clamp(EnvInt("PROJECTM_SEG_DEPTH_FRINGE", 2), 0, 6);
+    std::vector<float> influence(gn, -1.0f); // -1 = out of any body's reach; use the per-cell rule
     for (int c = 0; c < gn; ++c)
     {
         const int k = I.ccLabel[c];
-        keep[c] = (k >= 0) ? keepWeight(compClose[k]) : keepWeight(closeness(cellDepth[c]));
+        if (k >= 0 && compW[k] >= 0.0f) { influence[c] = compW[k]; }
+    }
+    for (int it = 0; it < fringe; ++it)
+    {
+        I.dilateScratch = influence; // reused across frames; assignment keeps the capacity
+        const std::vector<float>& prev = I.dilateScratch;
+        for (int c = 0; c < gn; ++c)
+        {
+            if (prev[c] >= 0.0f) { continue; }
+            const int cx = c % gw, cy = c / gw;
+            float best = -1.0f;
+            if (cx > 0)      { best = std::max(best, prev[c - 1]); }
+            if (cx < gw - 1) { best = std::max(best, prev[c + 1]); }
+            if (cy > 0)      { best = std::max(best, prev[c - gw]); }
+            if (cy < gh - 1) { best = std::max(best, prev[c + gw]); }
+            influence[c] = best;
+        }
+    }
+
+    std::vector<float> keep(gn, 0.0f);
+    for (int c = 0; c < gn; ++c)
+    {
+        keep[c] = (influence[c] >= 0.0f) ? influence[c] : keepWeight(closeness(cellDepth[c]));
     }
 
     // Grow the keep region a few cells (4-neighbour max). This is the crucial step: monocular depth
@@ -1374,7 +1470,8 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
     const int grow = std::clamp(EnvInt("PROJECTM_SEG_DEPTH_GROW", 1), 0, 12);
     for (int it = 0; it < grow; ++it)
     {
-        const std::vector<float> prev = keep;
+        I.dilateScratch = keep; // reused across frames (see above); avoids a per-iteration alloc
+        const std::vector<float>& prev = I.dilateScratch;
         for (int c = 0; c < gn; ++c)
         {
             const int cx = c % gw, cy = c / gw;
@@ -1386,8 +1483,22 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
             keep[c] = d;
         }
     }
+    // The grow above dilates with a 4-neighbour MAX, which is what protects the subject's edge. But
+    // it would equally let a background cell that reads "near" (the same depth bleed as above) push
+    // a 1 back into a body the gate just dropped -- resurrecting the very outline we removed. Cells
+    // owned by a dropped body are re-clamped to its verdict; the dilation stands everywhere else.
+    for (int c = 0; c < gn; ++c)
+    {
+        if (influence[c] >= 0.0f && influence[c] < 0.5f)
+        {
+            keep[c] = std::min(keep[c], influence[c]);
+        }
+    }
+
     // AND with the matte happens in step 7, where alpha is multiplied by this weight.
     for (int c = 0; c < gn; ++c) { I.cellWeight[c] = keep[c]; }
+    // Retained for next frame's per-component hysteresis/fade (sampled at component centroids).
+    I.prevCellWeight = I.cellWeight;
 
     // Optional tuning diagnostic ($PROJECTM_SEG_DEPTH_DEBUG=1): every ~60 frames, report the
     // reference closeness, the keep cutoff, and every anchor-eligible component -- its median
@@ -1409,7 +1520,8 @@ void SegMasker::ApplyDepthGate(int w, int h, std::vector<uint8_t>& outRGBA)
                 std::snprintf(buf, sizeof(buf), " [%zu:%s%s close=%.2f sal=%.1f keep=%.2f n=%zu]", k,
                               (static_cast<int>(k) == anchorK ? "*" : ""),
                               (compSideClipped[k] ? "|" : ""), compClose[k], compSal[k],
-                              keepWeight(compClose[k]), compDepths[k].size());
+                              compW[k] >= 0.0f ? compW[k] : keepWeight(compClose[k]),
+                              compDepths[k].size());
                 s += buf;
             }
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
