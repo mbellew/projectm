@@ -282,6 +282,62 @@ is the safe version; it is worth ~2 ms and can wait for real numbers.
 
 ---
 
+# Finding J: do NOT enable `video_refine` for the seg matte — and beware the green screen
+
+Investigated because the matte edge looked blocky after switching to RVM. Two conclusions, the
+second of which reverses the first.
+
+## J1. The blockiness was a dormant config line, not the model
+
+`Video Seg Quality = 1` (256²) had been **inert**: U²-Net has a *fixed* 320² input and ignores the
+quality setting. RVM's input is *dynamic*, so it honours it — and switching the primary model
+silently activated the lowest setting. Matte went 320² → 256².
+
+On the Mac, raising it is brutal, because CoreML rejects RVM's dynamic recurrent shapes
+(`E5RT ... unbounded dimension`) and falls back to CPU, so cost is linear in pixels:
+
+| Seg Quality | matte | seg inference | total capture frame |
+|---|---|---|---|
+| 1 | 256² | 25 ms | 49 ms |
+| 2 | 384² | 52 ms | 80 ms |
+| 3 | 512² | 91 ms | 128 ms |
+
+On the RTX (Finding F) quality 3 is **8.6 ms** — a non-issue. **Quality wants to be a per-machine
+setting**: 512² on the appliance, 256² on the Mac.
+
+## J2. Refinement is the WRONG lever here — it hardens a matte that should stay soft
+
+`videoRefine` defaults to 0 and only 1 of the 38 video presets ever set it, so the B1–B4 back-end
+has effectively never run. Enabling it costs ~nothing (3.27 vs 3.29 ms/frame). On a green-screen
+A/B (`presets/tests/402` vs `403`) it looked like a clear win: hair strands separated, edge tight,
+256²+refine beating 512²-without.
+
+**That test was misleading, and the conclusion was wrong.** The green screen is a *diagnostic*, not
+the product. Green-through-hair reads as "correct" there only because green really is what's
+behind. In use the background is the preset — arbitrary and often high-contrast — so a hardened
+matte punches it through every hair gap, and a bright or dark patch of preset speckles through the
+hair as a distracting blob.
+
+The underlying point: **soft, fractional alpha at hair is the correct answer, not imprecision.** A
+hair pixel genuinely is part hair, part background. RVM is a learned *matting* model and producing
+that soft alpha is the whole point of it. The refine chain's edge stage hardens it back toward
+binary, discarding exactly what RVM is good at. This is what the pipeline doc already warned about
+("*silhouette/hair/fingers → matting, not flooding … don't flood at edges*") and why it reserves
+"B2-v2 = learned matte seeded by trimap" as the proper edge stage — **RVM already is that stage.**
+
+**Rules:**
+- **seg / RVM prior → `video_refine = 0`.** Do not flip the engine default. Improve the edge with
+  matte *resolution* instead (see J1).
+- **coarse priors (depth band, bgsub, chroma) → refine is appropriate** — that is what B1's guided
+  up-fill was built for.
+- **Never judge a matte on a green screen.** Composite it over a real preset background, where a
+  hard edge shows its true cost.
+
+`presets/tests/403-compshader-video-greenscreen-refine.milk` is kept as the A/B twin of 402
+(identical but `video_refine = 1`) so this can be re-checked for other prior types.
+
+---
+
 # MEASURED — second pass: the deployment box (2026-07-12)
 
 Same day, on the **AtomMan G1 Pro / RTX 5060 / CUDA** — the machine the plan was written for. Config

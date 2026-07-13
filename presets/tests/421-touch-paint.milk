@@ -376,6 +376,11 @@ per_frame_72=q27 = (0.5 + 0.5*cos(tang + 2.0944)) * tbri;
 per_frame_73=video_alpha_mode = 0;
 per_frame_74=video_alpha_value = 1.0;
 per_frame_75=video_alpha_init = 0.0;
+// NOTE: deliberately NOT setting video_refine. The refinement back-end HARDENS the matte edge,
+// which is wrong for a seg matte: RVM is a learned matting model whose value is soft, fractional
+// alpha at hair. Hardening it punches the background through every hair gap, so a bright/dark
+// patch of the preset behind you speckles through your hair. Refine is for COARSE priors (depth
+// band, bgsub, chroma) -- not for post-processing an already-good soft matte. See SEG_MASK_PERF.md.
 per_pixel_1=xo = x;
 per_pixel_2=yo = y;
 per_pixel_3=

@@ -1,0 +1,34 @@
+[preset00]
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+
+// A/B twin of 402-compshader-video-greenscreen. IDENTICAL except video_refine = 1.
+//
+// 402 shows the RAW model matte (video_refine = 0, which is also the engine default -- see
+// PresetState videoRefine{0.0f}). This one runs the shared refinement back-end: B1 colour-guided
+// up-fill -> B2 matte -> B3 temporal -> B4 feather, which snaps the coarse model matte to the
+// full-res colour edges on the GPU.
+//
+// Flip between 402 and 403 to see what the refinement back-end is actually worth. The matte is
+// composited over spring green, so the edge is the whole picture.
+
+fDecay=0
+warp=0.000000
+wave_a=0
+
+per_frame_1=video_alpha_mode = 0;
+per_frame_2=video_alpha_value = 1.0;
+per_frame_3=video_alpha_decay = 0.90;
+per_frame_4=video_alpha_init = 0.0;
+per_frame_5=video_refine = 1;
+
+
+// Display current video frame. Use virtual green screen to visualize the alpha channel.
+comp_1=`shader_body
+comp_2=`{
+comp_3=`    float4 vid = GetVideo(uv, 0.0);
+comp_4=`    // Spring green (0,255,127 in 8-bit) normalized to 0..1; comp colors are 0..1.
+comp_5=`    ret = lerp(float3(0.0, 1.0, 0.5), vid.rgb, vid.a);
+comp_6=`}
