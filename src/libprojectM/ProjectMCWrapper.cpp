@@ -614,6 +614,13 @@ void projectm_pose_set(projectm_handle instance, const projectm_pose_joint* join
     projectMInstance->SetPose(reinterpret_cast<const float*>(joints), count);
 }
 
+void projectm_video_set_nudity(projectm_handle instance, float top, float rear,
+                               float front_female, float front_male, float female)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->SetNudity(top, rear, front_female, front_male, female);
+}
+
 uint32_t projectm_sprite_create(projectm_handle instance, const char* type, const char* code)
 {
     auto* projectMInstance = handle_to_instance(instance);

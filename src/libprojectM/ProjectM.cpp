@@ -866,6 +866,18 @@ void ProjectM::SetPose(const float* jointsXYZC, size_t jointCount)
     m_poseSeq.fetch_add(1, std::memory_order_relaxed);
 }
 
+void ProjectM::SetNudity(float top, float rear, float frontF, float frontM, float female)
+{
+    // Called from the capture thread. Already de-flickered by the app, so no smoothing here --
+    // plain stores read back next frame in the RenderContext fill (benign race, like pose).
+    // These are exposure states, not screen coordinates, so the mirror does not apply.
+    m_nudeTop = top;
+    m_nudeRear = rear;
+    m_nudeFrontF = frontF;
+    m_nudeFrontM = frontM;
+    m_nudeFemale = female;
+}
+
 void ProjectM::UpdatePoseState(double dtSeconds)
 {
     const float dt = static_cast<float>(dtSeconds);
@@ -1027,6 +1039,12 @@ auto ProjectM::GetRenderContext() -> Renderer::RenderContext
     ctx.segCoverage = m_segCoverage;
     ctx.segIdle = m_segIdle;
     ctx.segValid = m_segValid;
+
+    ctx.nudeTop = m_nudeTop;
+    ctx.nudeRear = m_nudeRear;
+    ctx.nudeFrontF = m_nudeFrontF;
+    ctx.nudeFrontM = m_nudeFrontM;
+    ctx.nudeFemale = m_nudeFemale;
 
     ctx.touchOn = m_touchActive ? 1.0f : 0.0f;
     ctx.touchX = m_touchX;

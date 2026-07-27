@@ -228,6 +228,26 @@ PROJECTM_EXPORT void projectm_video_set_seg_idle(projectm_handle instance, bool 
 PROJECTM_EXPORT void projectm_video_set_seg_centroid(projectm_handle instance,
                                                      float cx, float cy, float coverage);
 
+/**
+ * @brief Submits the main figure's exposure verdict (from an app-side NudeNet detector).
+ *
+ * The values are expected to be already de-flickered by the caller (near-binary, covered/0 by
+ * default); projectM stores them verbatim and exposes them to presets as the nude_* eval
+ * variables (nude_top, nude_rear, nude_front_f, nude_front_m, nude_female). Safe to call from
+ * any thread. Unlike the centroid, these are states rather than coordinates, so mirroring does
+ * not apply.
+ *
+ * @param instance The projectM instance handle.
+ * @param top Bare chest of the main figure, [0,1] (nude_top).
+ * @param rear Bare buttocks, [0,1] (nude_rear).
+ * @param front_female Exposed female genitalia, [0,1] (nude_front_f).
+ * @param front_male Exposed male genitalia, [0,1] (nude_front_m).
+ * @param female Face gender axis: 1=female, 0=male, 0.5=unknown (nude_female).
+ * @since 4.3.0
+ */
+PROJECTM_EXPORT void projectm_video_set_nudity(projectm_handle instance, float top, float rear,
+                                               float front_female, float front_male, float female);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

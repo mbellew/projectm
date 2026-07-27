@@ -52,6 +52,7 @@
 #include "depthCapture.hpp"
 #include "segMask.hpp"
 #include "poseTracker.hpp"
+#include "nudeNet.hpp"
 #include "poseTouchBridge.hpp"
 #endif
 
@@ -221,6 +222,11 @@ public:
     // $PROJECTM_POSE_MODEL overrides it.
     void setVideoPoseModel(const std::string& path) { _poseModelPath = path; }
 
+    // ONNX NudeNet model path ("Video Nudity Model"): when set (with Video Mask=seg + pose), the
+    // NudeNet detector runs at a throttled rate on the main figure and drives the nude_* eval
+    // variables. Empty = feature off. $PROJECTM_NUDENET_MODEL overrides it.
+    void setVideoNudityModel(const std::string& path) { _nudeModelPath = path; }
+
     // Whether the camera feed is horizontally mirrored ("Video Mirror"). The pose->touch bridge
     // applies the same flip so touch lands where the performer sees their hand.
     void setVideoMirror(bool mirror) { _videoMirror = mirror; }
@@ -330,6 +336,21 @@ private:
     // ONNX body-pose model path ("Video Pose Model"); empty = pose off. $PROJECTM_POSE_MODEL overrides.
     std::string _poseModelPath;
 
+    // ONNX NudeNet model path ("Video Nudity Model"); empty = feature off. $PROJECTM_NUDENET_MODEL overrides.
+    std::string _nudeModelPath;
+
+    // Breast-joint refinement. NudeNet's breast boxes correct the geometric L/R breast estimate
+    // (a fixed shoulder-hip-quad point that misaligns under torso twist). Each throttled NudeNet
+    // run EMA-smooths a per-side (detected - geometric) offset; every frame it is added to the live
+    // geometric estimate, so the joint tracks the twist smoothly and falls back to geometry when no
+    // breast is detected. _breastGeom* carry this frame's geometric centers to the offset step.
+    float _breastOffLX{0.0f}, _breastOffLY{0.0f}, _breastOffRX{0.0f}, _breastOffRY{0.0f};
+    float _breastGeomLX{0.5f}, _breastGeomLY{0.5f}, _breastGeomRX{0.5f}, _breastGeomRY{0.5f};
+    bool _breastGeomValid{false};
+    // GROIN refined the same way from NudeNet's exposed-genitalia box (one point).
+    float _groinOffX{0.0f}, _groinOffY{0.0f};
+    float _groinGeomX{0.5f}, _groinGeomY{0.5f};
+
     // Whether the camera feed is mirrored ("Video Mirror"); the pose->touch bridge matches the flip.
     bool _videoMirror{false};
 
@@ -389,6 +410,7 @@ private:
     std::unique_ptr<DepthCapture> _depthCapture; //!< Luxonis OAK depth-camera backend (when selected).
     std::unique_ptr<SegMasker> _segMasker;       //!< ONNX person-segmentation backend (when selected).
     std::unique_ptr<PoseTracker> _poseTracker;   //!< ONNX body-pose backend (when pose→touch is enabled).
+    std::unique_ptr<NudeNet> _nudeNet;           //!< ONNX NudeNet backend (when "Video Nudity Model" is set).
     std::unique_ptr<PoseTouchBridge> _poseBridge; //!< Arbitrates pose hands into one touch stream.
 
     // Hand observations produced on the capture thread and consumed by drainPoseTouch() on the

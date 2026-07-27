@@ -389,6 +389,7 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         app->setVideoSegHardenLo(config.read<double>("Video Seg Harden Lo", 0.0));
         app->setVideoSegHardenHi(config.read<double>("Video Seg Harden Hi", 1.0));
         app->setVideoPoseModel(expandTilde(config.read<std::string>("Video Pose Model", std::string())));
+        app->setVideoNudityModel(expandTilde(config.read<std::string>("Video Nudity Model", std::string())));
 
         // Texture search path(s) for image samplers (e.g. sampler_rand00). ';'-separated,
         // "~" expands to $HOME. Without this the library has no search path, so textured

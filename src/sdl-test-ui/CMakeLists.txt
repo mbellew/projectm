@@ -88,9 +88,11 @@ if(_onnx_found)
     list(APPEND _video_capture_sources onnxCommon.hpp onnxCommon.cpp)
     list(APPEND _video_capture_sources segMask.hpp segMask.cpp)
     list(APPEND _video_capture_sources poseTracker.hpp poseTracker.cpp)
+    list(APPEND _video_capture_sources nudeNet.hpp nudeNet.cpp)
 else()
     list(APPEND _video_capture_sources segMask.hpp segMask_stub.cpp)
     list(APPEND _video_capture_sources poseTracker.hpp poseTracker_stub.cpp)
+    list(APPEND _video_capture_sources nudeNet.hpp nudeNet_stub.cpp)
 endif()
 
 add_executable(projectM-Test-UI

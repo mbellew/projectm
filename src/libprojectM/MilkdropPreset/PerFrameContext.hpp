@@ -95,6 +95,11 @@ public:
     PRJM_EVAL_F* seg_coverage{}; //!< Person-seg foreground fraction, 0..1.
     PRJM_EVAL_F* seg_idle{};     //!< 1 when the matte is a synthetic idle stand-in, not a person.
     PRJM_EVAL_F* seg_valid{};    //!< 1.0 when a confident mask is present, else 0.0.
+    PRJM_EVAL_F* nude_top{};      //!< Main figure bare chest, 0..1 (de-flickered; 0 = covered).
+    PRJM_EVAL_F* nude_rear{};     //!< Main figure bare buttocks, 0..1.
+    PRJM_EVAL_F* nude_front_f{};  //!< Main figure exposed female genitalia, 0..1.
+    PRJM_EVAL_F* nude_front_m{};  //!< Main figure exposed male genitalia, 0..1.
+    PRJM_EVAL_F* nude_female{};   //!< Face gender axis: 1=female, 0=male, 0.5=unknown.
     PRJM_EVAL_F* touch_on{};       //!< 1.0 while a touch is active, else 0.0.
     PRJM_EVAL_F* touch_x{};        //!< Touch X, 0..1 left to right.
     PRJM_EVAL_F* touch_y{};        //!< Touch Y, 0..1 bottom to top.

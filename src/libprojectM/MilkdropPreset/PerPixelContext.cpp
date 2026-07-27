@@ -64,6 +64,11 @@ void PerPixelContext::RegisterBuiltinVariables()
     REG_VAR(seg_coverage);
     REG_VAR(seg_idle);
     REG_VAR(seg_valid);
+    REG_VAR(nude_top);
+    REG_VAR(nude_rear);
+    REG_VAR(nude_front_f);
+    REG_VAR(nude_front_m);
+    REG_VAR(nude_female);
     REG_VAR(touch_on);
     REG_VAR(touch_x);
     REG_VAR(touch_y);
@@ -108,6 +113,11 @@ void PerPixelContext::LoadStateReadOnlyVariables(PresetState& state, PerFrameCon
     *seg_coverage = static_cast<PRJM_EVAL_F>(state.renderContext.segCoverage);
     *seg_idle = static_cast<PRJM_EVAL_F>(state.renderContext.segIdle);
     *seg_valid = static_cast<PRJM_EVAL_F>(state.renderContext.segValid);
+    *nude_top = static_cast<PRJM_EVAL_F>(state.renderContext.nudeTop);
+    *nude_rear = static_cast<PRJM_EVAL_F>(state.renderContext.nudeRear);
+    *nude_front_f = static_cast<PRJM_EVAL_F>(state.renderContext.nudeFrontF);
+    *nude_front_m = static_cast<PRJM_EVAL_F>(state.renderContext.nudeFrontM);
+    *nude_female = static_cast<PRJM_EVAL_F>(state.renderContext.nudeFemale);
     *touch_on = static_cast<PRJM_EVAL_F>(state.renderContext.touchOn);
     *touch_x = static_cast<PRJM_EVAL_F>(state.renderContext.touchX);
     *touch_y = static_cast<PRJM_EVAL_F>(state.renderContext.touchY);
@@ -150,6 +160,11 @@ void PerPixelContext::CopyPerFrameState(const PerPixelContext& source)
     *seg_coverage = *source.seg_coverage;
     *seg_idle = *source.seg_idle;
     *seg_valid = *source.seg_valid;
+    *nude_top = *source.nude_top;
+    *nude_rear = *source.nude_rear;
+    *nude_front_f = *source.nude_front_f;
+    *nude_front_m = *source.nude_front_m;
+    *nude_female = *source.nude_female;
     *touch_on = *source.touch_on;
     *touch_x = *source.touch_x;
     *touch_y = *source.touch_y;

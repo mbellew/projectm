@@ -83,7 +83,25 @@ typedef enum
     //! Hip midpoint; body root.
     PROJECTM_JOINT_PELVIS = 21,
 
-    PROJECTM_JOINT_COUNT = 22
+    //! Torso points, placed by bilinear interpolation inside the shoulder-hip quad (robust to
+    //! lean/rotation, unlike a vertical drop). Breasts are upper-chest; navel is lower torso.
+    PROJECTM_JOINT_L_BREAST = 22,
+    PROJECTM_JOINT_R_BREAST = 23,
+    PROJECTM_JOINT_NAVEL = 24,
+    //! Groin: hip midpoint extended below along the shoulder->hip axis.
+    PROJECTM_JOINT_GROIN = 25,
+    //! Throat/neck base: shoulder midpoint raised toward the head.
+    PROJECTM_JOINT_THROAT = 26,
+    //! Crown: top of head, above HEAD.
+    PROJECTM_JOINT_CROWN = 27,
+    //! Fingertips: extended further past the wrist than L/R_HAND (a "pointing" tip).
+    PROJECTM_JOINT_L_FINGER = 28,
+    PROJECTM_JOINT_R_FINGER = 29,
+    //! Foot tips: extended past the ankle along the shin (COCO-17 stops at the ankle).
+    PROJECTM_JOINT_L_FOOT = 30,
+    PROJECTM_JOINT_R_FOOT = 31,
+
+    PROJECTM_JOINT_COUNT = 32
 } projectm_pose_joint_index;
 
 /**
