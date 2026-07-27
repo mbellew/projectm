@@ -375,6 +375,19 @@ public:
     void SetPose(const float* jointsXYZC, size_t jointCount);
 
     /**
+     * @brief Submits the main figure's NudeNet exposure verdict. Safe to call from any thread.
+     *
+     * The values are already de-flickered by the caller (near-binary, covered/0 by default), so
+     * the library stores them verbatim and exposes them as the nude_* eval variables.
+     * @param top Bare chest of the main figure, [0,1] (nude_top).
+     * @param rear Bare buttocks, [0,1] (nude_rear).
+     * @param frontF Exposed female genitalia, [0,1] (nude_front_f).
+     * @param frontM Exposed male genitalia, [0,1] (nude_front_m).
+     * @param female Face gender axis: 1=female, 0=male, 0.5=unknown (nude_female).
+     */
+    void SetNudity(float top, float rear, float frontF, float frontM, float female);
+
+    /**
      * @brief Draws the given texture on the active preset's main texture to get a "burn-in" effect.
      * @param openGlTextureId The OpenGL texture to draw onto the active preset(s).
      * @param left Left coordinate in pixels on the destination texture.
@@ -469,6 +482,15 @@ private:
     float m_segVy{0.0f};                          //!< Smoothed centroid velocity Y (seg_vy), /sec.
     float m_segCoverage{0.0f};                    //!< Smoothed foreground fraction (seg_coverage).
     float m_segValid{0.0f};                       //!< 1.0 when a confident mask is present (seg_valid).
+
+    // Main-figure NudeNet exposure verdict. Already de-flickered by the app, so these are plain
+    // stores read back next frame in the RenderContext fill (like the pose skeleton) -- the
+    // benign cross-thread race is acceptable, as with seg/pose. Exposed as the nude_* eval vars.
+    float m_nudeTop{0.0f};                         //!< nude_top: bare chest.
+    float m_nudeRear{0.0f};                        //!< nude_rear: bare buttocks.
+    float m_nudeFrontF{0.0f};                      //!< nude_front_f: exposed female genitalia.
+    float m_nudeFrontM{0.0f};                      //!< nude_front_m: exposed male genitalia.
+    float m_nudeFemale{0.5f};                      //!< nude_female: face gender axis (0.5 = unknown).
 
     // Single arbitrated touch point. The app writes the measured values via Touch/TouchDrag/
     // TouchDestroy (mouse handler today, pose bridge later); UpdateTouchState finite-differences

@@ -42,7 +42,17 @@ enum PoseJoint : int
     PoseJointRHand = 19,
     PoseJointHead = 20,   //!< Head center, above the nose.
     PoseJointPelvis = 21, //!< Hip midpoint.
-    PoseJointCount = 22
+    PoseJointLBreast = 22, //!< Upper-chest, bilinear in the shoulder-hip quad.
+    PoseJointRBreast = 23,
+    PoseJointNavel = 24,   //!< Lower torso, bilinear in the shoulder-hip quad.
+    PoseJointGroin = 25,   //!< Hip midpoint extended below along the shoulder->hip axis.
+    PoseJointThroat = 26,  //!< Shoulder midpoint raised toward the head.
+    PoseJointCrown = 27,   //!< Top of head, above Head.
+    PoseJointLFinger = 28, //!< Fingertip, extended further past the wrist than the Hand.
+    PoseJointRFinger = 29,
+    PoseJointLFoot = 30,   //!< Foot tip, extended past the ankle along the shin.
+    PoseJointRFoot = 31,
+    PoseJointCount = 32
 };
 
 //! Per-variable indices for the pose(JOINT, VAR) eval function (the ALL_CAPS X/Y/Z/CONF/VX/VY).
@@ -129,6 +139,14 @@ public:
     float segVy{0.0f};       //!< Centroid velocity Y, screen-fractions/sec (seg_vy).
     float segCoverage{0.0f}; //!< Foreground fraction of the frame, [0,1] (seg_coverage).
     float segValid{0.0f};    //!< 1.0 when a confident mask is present, else 0.0 (seg_valid).
+
+    // Main-figure exposure state from the NudeNet detector, already de-flickered by the app
+    // (near-binary, covered/0 by default). Exposed to presets as the nude_* eval variables.
+    float nudeTop{0.0f};      //!< Bare chest of the main figure, [0,1] (nude_top).
+    float nudeRear{0.0f};     //!< Bare buttocks of the main figure, [0,1] (nude_rear).
+    float nudeFrontF{0.0f};   //!< Exposed female genitalia, [0,1] (nude_front_f).
+    float nudeFrontM{0.0f};   //!< Exposed male genitalia, [0,1] (nude_front_m).
+    float nudeFemale{0.5f};   //!< Face gender axis: 1=female, 0=male, 0.5=unknown (nude_female).
 
     // Single arbitrated touch point, exposed to presets as touch_* eval variables. Written by
     // ProjectM::Touch/TouchDrag/TouchDestroy (mouse today, pose bridge later). Coordinate

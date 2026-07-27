@@ -95,6 +95,16 @@ void RegisterPoseConstants(projectm_eval_context* context)
     RegisterConstant(context, "JOINT_R_HAND", Renderer::PoseJointRHand);
     RegisterConstant(context, "JOINT_HEAD", Renderer::PoseJointHead);
     RegisterConstant(context, "JOINT_PELVIS", Renderer::PoseJointPelvis);
+    RegisterConstant(context, "JOINT_L_BREAST", Renderer::PoseJointLBreast);
+    RegisterConstant(context, "JOINT_R_BREAST", Renderer::PoseJointRBreast);
+    RegisterConstant(context, "JOINT_NAVEL", Renderer::PoseJointNavel);
+    RegisterConstant(context, "JOINT_GROIN", Renderer::PoseJointGroin);
+    RegisterConstant(context, "JOINT_THROAT", Renderer::PoseJointThroat);
+    RegisterConstant(context, "JOINT_CROWN", Renderer::PoseJointCrown);
+    RegisterConstant(context, "JOINT_L_FINGER", Renderer::PoseJointLFinger);
+    RegisterConstant(context, "JOINT_R_FINGER", Renderer::PoseJointRFinger);
+    RegisterConstant(context, "JOINT_L_FOOT", Renderer::PoseJointLFoot);
+    RegisterConstant(context, "JOINT_R_FOOT", Renderer::PoseJointRFoot);
     RegisterConstant(context, "JOINT_COUNT", Renderer::PoseJointCount);
 
     // Which value of a joint to read.

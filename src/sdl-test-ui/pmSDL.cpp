@@ -316,6 +316,36 @@ void projectMSDL::startVideoCapture()
                     }
                 }
 
+                // Optional NudeNet detector: $PROJECTM_NUDENET_MODEL > "Video Nudity Model". Needs
+                // pose (its bbox gates detections to the main figure), so only enable it when pose is
+                // active. Throttled in the callback; drives the nude_* eval variables.
+                NudeNet* nude = nullptr;
+                if (pose && NudeNet::IsSupported())
+                {
+                    std::string nudeModel;
+                    if (const char* env = std::getenv("PROJECTM_NUDENET_MODEL"); env && env[0])
+                    {
+                        nudeModel = env;
+                    }
+                    else if (!_nudeModelPath.empty())
+                    {
+                        nudeModel = _nudeModelPath;
+                    }
+                    if (!nudeModel.empty())
+                    {
+                        if (!_nudeNet)
+                        {
+                            _nudeNet = std::make_unique<NudeNet>();
+                        }
+                        if (_nudeNet->IsLoaded() || _nudeNet->Load(nudeModel))
+                        {
+                            nude = _nudeNet.get();
+                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                        "NudeNet exposure detection active (nude_* eval variables).");
+                        }
+                    }
+                }
+
                 // Pose->touch confidence tuning (env, live). confFloor: drop wrists below this raw
                 // keypoint confidence. alphaFloor: how much a wrist OFF the seg matte keeps of its
                 // confidence (1.0 = ignore the matte entirely). A fast-waving hand is often clipped
@@ -335,7 +365,7 @@ void projectMSDL::startVideoCapture()
                 // Library owns the mirror (projectm_video_set_mirror), so the matte
                 // travels with the RGB either way — seg passes mirror=false.
                 const bool segOk = _videoCapture->Start(
-                    [handle, masker, outBuf, pose, this, confFloor, alphaFloor, reach](
+                    [handle, masker, outBuf, pose, nude, this, confFloor, alphaFloor, reach](
                         const void* data, int width, int height, VideoCapture::PixelFormat /*fmt*/) {
                         // Per-stage timing for SEG_MASK_PERF.md. Everything in this callback runs
                         // serially on the single capture thread, so these add up to the mask latency.
@@ -548,6 +578,7 @@ void projectMSDL::startVideoCapture()
                             {
                                 joint.z = -1.0f; // no depth unless we can sample it
                             }
+                            _breastGeomValid = false; // set true only when the shoulder-hip quad is built
 
                             if (!poses.empty())
                             {
@@ -577,17 +608,16 @@ void projectMSDL::startVideoCapture()
                                         (lhip.y + rhip.y) * 0.5f, std::min(lhip.conf, rhip.conf));
                                 }
 
-                                // HEART: shoulder midpoint dropped toward the hips. The drop is
-                                // deliberately SHALLOW (0.15, not sternum-deep) -- the heart sits much
-                                // closer to the shoulder line than to the shoulder/hip midpoint.
+                                // HEART: shoulder midpoint dropped toward the hips (= the quad point at
+                                // u=0.5, v=0.30). 0.30 sits mid-upper chest; the older 0.15 read too high.
                                 if (ls.conf > 0.4f && rs.conf > 0.4f)
                                 {
                                     float hx = (ls.x + rs.x) * 0.5f;
                                     float hy = (ls.y + rs.y) * 0.5f;
                                     if (lhip.conf > 0.3f && rhip.conf > 0.3f)
                                     {
-                                        hx += 0.15f * ((lhip.x + rhip.x) * 0.5f - hx);
-                                        hy += 0.15f * ((lhip.y + rhip.y) * 0.5f - hy);
+                                        hx += 0.18f * ((lhip.x + rhip.x) * 0.5f - hx);
+                                        hy += 0.18f * ((lhip.y + rhip.y) * 0.5f - hy);
                                     }
                                     else
                                     {
@@ -611,23 +641,200 @@ void projectMSDL::startVideoCapture()
                                 putHand(PROJECTM_JOINT_L_HAND, p[Kpt::LeftWrist], p[Kpt::LeftElbow]);
                                 putHand(PROJECTM_JOINT_R_HAND, p[Kpt::RightWrist], p[Kpt::RightElbow]);
 
-                                // HEAD: ear midpoint if available (steadier than the nose), else the
-                                // nose; lifted a little so a halo/crown sits above the face.
+                                // HEAD & CROWN: lift along the head's OWN up-axis (eye-midpoint - nose),
+                                // so they follow head tilt and auto-scale with face size -- not a fixed
+                                // vertical nudge. Fall back to an ear-based lift if eyes/nose aren't seen.
                                 const Keypoint& lear = p[Kpt::LeftEar];
                                 const Keypoint& rear = p[Kpt::RightEar];
+                                const Keypoint& leye = p[Kpt::LeftEye];
+                                const Keypoint& reye = p[Kpt::RightEye];
                                 const Keypoint& nose = p[Kpt::Nose];
-                                if (lear.conf > 0.3f && rear.conf > 0.3f)
+                                if (leye.conf > 0.3f && reye.conf > 0.3f && nose.conf > 0.3f)
                                 {
-                                    put(PROJECTM_JOINT_HEAD, (lear.x + rear.x) * 0.5f,
-                                        (lear.y + rear.y) * 0.5f + 0.03f, std::min(lear.conf, rear.conf));
+                                    const float ex = (leye.x + reye.x) * 0.5f, ey = (leye.y + reye.y) * 0.5f;
+                                    const float ux = ex - nose.x, uy = ey - nose.y; // up-the-face (rolls with head)
+                                    const float hc = std::min(std::min(leye.conf, reye.conf), nose.conf);
+                                    put(PROJECTM_JOINT_HEAD,  ex, ey, hc); // head centre
+                                    put(PROJECTM_JOINT_CROWN, ex + ux * 2.0f, ey + uy * 2.0f, hc); // top of head
+                                }
+                                else if (lear.conf > 0.3f && rear.conf > 0.3f)
+                                {
+                                    const float mx = (lear.x + rear.x) * 0.5f, my = (lear.y + rear.y) * 0.5f;
+                                    put(PROJECTM_JOINT_HEAD,  mx, my + 0.06f, std::min(lear.conf, rear.conf));
+                                    put(PROJECTM_JOINT_CROWN, mx, my + 0.14f, std::min(lear.conf, rear.conf));
                                 }
                                 else if (nose.conf > 0.3f)
                                 {
-                                    put(PROJECTM_JOINT_HEAD, nose.x, nose.y + 0.04f, nose.conf);
+                                    put(PROJECTM_JOINT_HEAD, nose.x, nose.y + 0.06f, nose.conf);
                                 }
+
+                                // --- Torso points via BILINEAR interpolation of the shoulder-hip quad
+                                // (u across 0=left..1=right, v down 0=shoulders..1=hips). Robust to
+                                // lean/rotation, unlike a vertical drop. Needs all four corners.
+                                if (ls.conf > 0.3f && rs.conf > 0.3f && lhip.conf > 0.3f && rhip.conf > 0.3f)
+                                {
+                                    const float qc = std::min(std::min(ls.conf, rs.conf),
+                                                              std::min(lhip.conf, rhip.conf));
+                                    auto quadPt = [&](float u, float v, float& ox, float& oy) {
+                                        const float tx = ls.x * (1.0f - u) + rs.x * u;
+                                        const float ty = ls.y * (1.0f - u) + rs.y * u;
+                                        const float bx = lhip.x * (1.0f - u) + rhip.x * u;
+                                        const float by = lhip.y * (1.0f - u) + rhip.y * u;
+                                        ox = tx * (1.0f - v) + bx * v;
+                                        oy = ty * (1.0f - v) + by * v;
+                                    };
+                                    auto quad = [&](int idx, float u, float v) {
+                                        float px, py;
+                                        quadPt(u, v, px, py);
+                                        put(idx, px, py, qc);
+                                    };
+                                    // BREAST: geometric quad estimate + NudeNet-refined offset (twist
+                                    // correction, updated at the detector's throttled rate below).
+                                    quadPt(0.10f, 0.30f, _breastGeomLX, _breastGeomLY);
+                                    quadPt(0.90f, 0.30f, _breastGeomRX, _breastGeomRY);
+                                    _breastGeomValid = true;
+                                    put(PROJECTM_JOINT_L_BREAST, _breastGeomLX + _breastOffLX,
+                                        _breastGeomLY + _breastOffLY, qc);
+                                    put(PROJECTM_JOINT_R_BREAST, _breastGeomRX + _breastOffRX,
+                                        _breastGeomRY + _breastOffRY, qc);
+                                    quad(PROJECTM_JOINT_NAVEL,    0.50f, 0.75f);
+
+                                    // GROIN: hip midpoint pushed below the quad along shoulders->hips
+                                    // (geometric estimate) + NudeNet-refined offset (see the nudenet
+                                    // step below), exactly like the breasts.
+                                    const float smx = (ls.x + rs.x) * 0.5f, smy = (ls.y + rs.y) * 0.5f;
+                                    const float hmx = (lhip.x + rhip.x) * 0.5f, hmy = (lhip.y + rhip.y) * 0.5f;
+                                    _groinGeomX = hmx + 0.12f * (hmx - smx);
+                                    _groinGeomY = hmy + 0.12f * (hmy - smy);
+                                    put(PROJECTM_JOINT_GROIN, _groinGeomX + _groinOffX,
+                                        _groinGeomY + _groinOffY, qc);
+                                }
+
+                                // THROAT: shoulder midpoint raised toward the head (nose = up ref).
+                                if (ls.conf > 0.3f && rs.conf > 0.3f && nose.conf > 0.3f)
+                                {
+                                    const float smx = (ls.x + rs.x) * 0.5f, smy = (ls.y + rs.y) * 0.5f;
+                                    put(PROJECTM_JOINT_THROAT, smx + 0.30f * (nose.x - smx),
+                                        smy + 0.30f * (nose.y - smy),
+                                        std::min(std::min(ls.conf, rs.conf), nose.conf));
+                                }
+
+                                // (CROWN is computed with HEAD above, along the face up-axis.)
+
+                                // FINGERTIPS: like the hand tip, reaching FURTHER past the wrist.
+                                auto putTip = [&](int idx, const Keypoint& a, const Keypoint& b, float k) {
+                                    if (a.conf <= 0.1f) { return; }
+                                    float x = a.x, y = a.y;
+                                    if (b.conf > 0.3f) { x = a.x + (a.x - b.x) * k; y = a.y + (a.y - b.y) * k; }
+                                    put(idx, x, y, a.conf);
+                                };
+                                putTip(PROJECTM_JOINT_L_FINGER, p[Kpt::LeftWrist],  p[Kpt::LeftElbow],  0.75f);
+                                putTip(PROJECTM_JOINT_R_FINGER, p[Kpt::RightWrist], p[Kpt::RightElbow], 0.75f);
+                                // FOOT TIPS: extend past the ankle along the shin (knee->ankle).
+                                putTip(PROJECTM_JOINT_L_FOOT, p[Kpt::LeftAnkle],  p[Kpt::LeftKnee],  0.30f);
+                                putTip(PROJECTM_JOINT_R_FOOT, p[Kpt::RightAnkle], p[Kpt::RightKnee], 0.30f);
                             }
 
                             projectm_pose_set(handle, joints, PROJECTM_JOINT_COUNT);
+                        }
+
+                        // NudeNet (throttled): main-figure exposure -> nude_* eval variables. Runs
+                        // every Nth capture frame (PROJECTM_NUDENET_EVERY, ~2-3 Hz) since it is a
+                        // full extra inference on the serial capture thread; its hysteresis integrates
+                        // over these calls and the library holds the last verdict in between. Gated to
+                        // the primary person's bbox; no person -> personValid=false decays it covered.
+                        if (nude)
+                        {
+                            static const int nudeEvery = []() {
+                                const char* v = std::getenv("PROJECTM_NUDENET_EVERY");
+                                const int n = (v && v[0]) ? std::atoi(v) : 12;
+                                return n > 0 ? n : 12;
+                            }();
+                            static int nudeFrame = 0;
+                            if ((nudeFrame++ % nudeEvery) == 0)
+                            {
+                                const uint8_t* segRgb = masker->RgbFrame();
+                                const bool personValid = !poses.empty() && segRgb != nullptr;
+                                float bx0 = 0.0f, by0 = 0.0f, bx1 = 0.0f, by1 = 0.0f;
+                                if (!poses.empty())
+                                {
+                                    const PersonPose& p = poses.front();
+                                    bx0 = p.boxX0; by0 = p.boxY0; bx1 = p.boxX1; by1 = p.boxY1;
+                                }
+                                nude->ProcessRgb(segRgb, width, height, bx0, by0, bx1, by1, personValid);
+                                projectm_video_set_nudity(handle, nude->Top(), nude->Rear(),
+                                                          nude->FrontF(), nude->FrontM(), nude->Female());
+
+                                // Breast-location refinement: EMA a per-side (detected - geometric)
+                                // offset toward this run's NudeNet breast boxes, assigning each to the
+                                // nearer geometric side. Sides with no detection decay toward 0 (fall
+                                // back to geometry). Applied every frame in the quad step above.
+                                if (_breastGeomValid)
+                                {
+                                    const float maxOff = 0.15f; // clamp so a stray box can't fling it
+                                    const float a = 0.6f;       // per-run EMA toward the correction
+                                    // Confidence-weighted fusion: weak (covered) boxes wander, strong
+                                    // (exposed) boxes are precise. w ramps 0..1 across [loW, hiW], so a
+                                    // low-confidence box keeps the joint on geometry and a high one
+                                    // pulls it fully onto the box. Env-tunable.
+                                    static const float loW = []() {
+                                        const char* v = std::getenv("PROJECTM_NUDENET_BREAST_W_LO");
+                                        return (v && v[0]) ? static_cast<float>(std::atof(v)) : 0.35f;
+                                    }();
+                                    static const float hiW = []() {
+                                        const char* v = std::getenv("PROJECTM_NUDENET_BREAST_W_HI");
+                                        return (v && v[0]) ? static_cast<float>(std::atof(v)) : 0.60f;
+                                    }();
+                                    const float invSpan = 1.0f / std::max(1e-3f, hiW - loW);
+                                    bool gotL = false, gotR = false;
+                                    const int n = nude->BreastCount();
+                                    for (int i = 0; i < n; ++i)
+                                    {
+                                        float bx = 0.0f, by = 0.0f, bs = 0.0f;
+                                        if (!nude->Breast(i, bx, by, bs)) { continue; }
+                                        const float w = std::clamp((bs - loW) * invSpan, 0.0f, 1.0f);
+                                        const float dL = std::hypot(bx - _breastGeomLX, by - _breastGeomLY);
+                                        const float dR = std::hypot(bx - _breastGeomRX, by - _breastGeomRY);
+                                        const bool toL = (dL <= dR) ? !gotL : gotR; // prefer nearer, one per side
+                                        if (toL)
+                                        {
+                                            const float ox = std::clamp(bx - _breastGeomLX, -maxOff, maxOff) * w;
+                                            const float oy = std::clamp(by - _breastGeomLY, -maxOff, maxOff) * w;
+                                            _breastOffLX += (ox - _breastOffLX) * a;
+                                            _breastOffLY += (oy - _breastOffLY) * a;
+                                            gotL = true;
+                                        }
+                                        else
+                                        {
+                                            const float ox = std::clamp(bx - _breastGeomRX, -maxOff, maxOff) * w;
+                                            const float oy = std::clamp(by - _breastGeomRY, -maxOff, maxOff) * w;
+                                            _breastOffRX += (ox - _breastOffRX) * a;
+                                            _breastOffRY += (oy - _breastOffRY) * a;
+                                            gotR = true;
+                                        }
+                                    }
+                                    const float decay = 0.5f; // ease back to geometry when unseen
+                                    if (!gotL) { _breastOffLX *= decay; _breastOffLY *= decay; }
+                                    if (!gotR) { _breastOffRX *= decay; _breastOffRY *= decay; }
+
+                                    // GROIN: same confidence-weighted offset toward the exposed-
+                                    // genitalia box; decay to geometry when not detected.
+                                    float gx = 0.0f, gy = 0.0f, gsc = 0.0f;
+                                    if (nude->GroinBox(gx, gy, gsc))
+                                    {
+                                        const float w = std::clamp((gsc - loW) * invSpan, 0.0f, 1.0f);
+                                        const float ox = std::clamp(gx - _groinGeomX, -maxOff, maxOff) * w;
+                                        const float oy = std::clamp(gy - _groinGeomY, -maxOff, maxOff) * w;
+                                        _groinOffX += (ox - _groinOffX) * a;
+                                        _groinOffY += (oy - _groinOffY) * a;
+                                    }
+                                    else
+                                    {
+                                        _groinOffX *= decay;
+                                        _groinOffY *= decay;
+                                    }
+                                }
+                            }
                         }
 
                         // Turn each detected wrist into a HandObservation (seg-fused: matte alpha
