@@ -6,9 +6,11 @@
 
 #include <SDL2/SDL_hints.h>
 
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <sys/stat.h>
 
 // Split a semicolon-separated preference list (e.g. "OBS; FaceTime") into trimmed,
 // non-empty entries, preserving order. Used for the "Audio Devices"/"Video Devices" keys.
@@ -53,6 +55,71 @@ static std::string expandTilde(const std::string& path)
         return std::string(home) + path.substr(1);
     }
     return path; // "~something" (e.g. ~user) — unsupported, leave unchanged
+}
+
+// Directory component of a path, without the trailing separator ("" when there is none, e.g. a bare
+// "favorites.txt"). A path at the filesystem root ("/favorites.txt") yields "/" so the separator
+// isn't lost.
+static std::string parentDirectory(const std::string& path)
+{
+    const auto separator = path.find_last_of("/\\");
+    if (separator == std::string::npos)
+    {
+        return {};
+    }
+    if (separator == 0)
+    {
+        return path.substr(0, 1);
+    }
+    return path.substr(0, separator);
+}
+
+// Is `path` already anchored, so it must not be rebased onto another directory?
+static bool isAbsolutePath(const std::string& path)
+{
+    if (path.empty())
+    {
+        return false;
+    }
+    if (path.front() == '/' || path.front() == '\\')
+    {
+        return true;
+    }
+#ifdef _WIN32
+    // Drive-qualified: "C:\..." and the drive-relative "C:foo", neither of which may be rebased.
+    if (path.size() >= 2 && path[1] == ':' && std::isalpha(static_cast<unsigned char>(path.front())))
+    {
+        return true;
+    }
+#endif
+    return false;
+}
+
+// Resolve one $PROJECTM_PRESET_LIST entry against the directory holding the list file, so a list
+// travels with its presets and can be relocated (dropped into an appliance bundle, moved between
+// machines) without rewriting every line. Absolute and "~"-anchored entries are used as-is. So is
+// everything when the list was named without a directory ("PROJECTM_PRESET_LIST=favorites.txt"),
+// which leaves those entries relative to the working directory as they have always been.
+static std::string resolvePresetListEntry(const std::string& listDirectory, const std::string& entry)
+{
+    const std::string expanded = expandTilde(entry);
+    if (listDirectory.empty() || isAbsolutePath(expanded))
+    {
+        return expanded;
+    }
+    if (listDirectory.back() == '/' || listDirectory.back() == '\\')
+    {
+        return listDirectory + expanded; // list sits at the filesystem root
+    }
+    return listDirectory + "/" + expanded;
+}
+
+// Does `path` exist as a directory? Used to fall back to the DATADIR_PATH tree only when it really
+// holds the data — pointing the engine at a nonexistent directory would just hide the real problem.
+static bool dirExists(const std::string& path)
+{
+    struct stat st{};
+    return !path.empty() && stat(path.c_str(), &st) == 0 && (st.st_mode & S_IFDIR) != 0;
 }
 
 #if OGL_DEBUG
@@ -288,6 +355,8 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Failed to open $PROJECTM_PRESET_LIST file: %s\n", listEnv);
         }
+        // Relative entries are resolved against the list's own directory -- see resolvePresetListEntry().
+        const std::string listDirectory = parentDirectory(listEnv);
         std::string line;
         while (std::getline(in, line))
         {
@@ -295,10 +364,11 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
             {
                 continue;
             }
-            presetList.push_back(line);
+            presetList.push_back(resolvePresetListEntry(listDirectory, line));
         }
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using preset list from $PROJECTM_PRESET_LIST: %s (%zu entries)\n",
-                    listEnv, presetList.size());
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Using preset list from $PROJECTM_PRESET_LIST: %s (%zu entries, relative paths resolved against '%s')\n",
+                    listEnv, presetList.size(), listDirectory.empty() ? "." : listDirectory.c_str());
         app = new projectMSDL(glCtx, presetList);
     }
     else
@@ -394,7 +464,15 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         // Texture search path(s) for image samplers (e.g. sampler_rand00). ';'-separated,
         // "~" expands to $HOME. Without this the library has no search path, so textured
         // presets fail to compile their warp/comp shaders (the sampler is left undeclared).
-        std::vector<std::string> texturePaths = splitPreferenceList(config.read<std::string>("Texture Path", std::string()));
+        // Falls back to the install tree's textures/ (DATADIR_PATH — /opt/projectm on the Linux
+        // appliance) when the key is absent, so a config.inp that predates the key still gets them.
+        std::string textureSetting = config.read<std::string>("Texture Path", std::string());
+        if (textureSetting.empty() && dirExists(base_path + "/textures"))
+        {
+            textureSetting = base_path + "/textures";
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "No \"Texture Path\" in config; using the install tree: %s\n", textureSetting.c_str());
+        }
+        std::vector<std::string> texturePaths = splitPreferenceList(textureSetting);
         for (auto& path : texturePaths)
         {
             path = expandTilde(path);
@@ -420,7 +498,15 @@ projectMSDL *setupSDLApp(int fullscreenOverride) {
         }
         else
         {
-            transitionPaths = splitPreferenceList(config.read<std::string>("Transition Path", std::string()));
+            // Same install-tree fallback as textures: without a path the engine quietly uses only
+            // the six transitions compiled into the library.
+            std::string transitionSetting = config.read<std::string>("Transition Path", std::string());
+            if (transitionSetting.empty() && dirExists(base_path + "/transitions"))
+            {
+                transitionSetting = base_path + "/transitions";
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "No \"Transition Path\" in config; using the install tree: %s\n", transitionSetting.c_str());
+            }
+            transitionPaths = splitPreferenceList(transitionSetting);
         }
         for (auto& path : transitionPaths)
         {
