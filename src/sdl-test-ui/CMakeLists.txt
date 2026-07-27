@@ -144,8 +144,14 @@ if(ENABLE_VIDEO_CAPTURE AND APPLE)
     set_source_files_properties(videoCapture_macos.mm PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"
             )
+    # stb_image: the idle stand-in (setIdleStandIn) decodes its PNG via the vendored stb decoder,
+    # compiled unconditionally in pmSDL.cpp -- so link it on the macOS video-capture path too
+    # (previously only the Linux branch linked it, so macOS failed to link).
+    find_package(Threads REQUIRED)
     target_link_libraries(projectM-Test-UI
             PRIVATE
+            Threads::Threads
+            stb_image
             "-framework AVFoundation"
             "-framework CoreMedia"
             "-framework CoreVideo"
