@@ -202,7 +202,7 @@ or run a single video preset via `PROJECTM_PRESET_LIST`:
 
 ```shell
 PROJECTM_VIDEO_MASK=seg \
-PROJECTM_PRESET_LIST=<(echo presets/tests/401-compshader-video-alpha.milk) \
+PROJECTM_PRESET_LIST=<(echo "$PWD/presets/tests/401-compshader-video-alpha.milk") \
   ./build/src/sdl-test-ui/projectM-Test-UI
 ```
 
