@@ -77,7 +77,9 @@ preset file: build
     set -euo pipefail
     list="$(mktemp -t projectm-preset.XXXXXX)"
     trap 'rm -f "$list"' EXIT
-    printf '%s\n' "{{file}}" > "$list"
+    # Absolute: relative entries in a preset list resolve against the list's own directory, and
+    # this throwaway list lives in $TMPDIR rather than the repo.
+    printf '%s\n' "$(cd "$(dirname "{{file}}")" && pwd)/$(basename "{{file}}")" > "$list"
     {{run_env}} PROJECTM_PRESET_LIST="$list" {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 # Build a self-contained, relocatable macOS appliance bundle into dist/ (see deploy/README.md)
