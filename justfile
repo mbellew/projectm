@@ -55,12 +55,20 @@ video: build
     {{run_env}} PROJECTM_PRESET_PATH=presets/video {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 # Run the test UI with favorites.txt as the preset list
+example: build
+    {{run_env}} PROJECTM_PRESET_LIST=recursive_examples.txt {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
+
+# Run the test UI with favorites.txt as the preset list
 favorites: build
     {{run_env}} PROJECTM_PRESET_LIST=favorites.txt {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 # Run the test UI with videos.txt as the preset list
 videotxt: build
     {{run_env}} PROJECTM_PRESET_LIST=video.txt {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
+
+# Run the test UI with appliance.txt (the 4-5 star video presets from RATINGS.md)
+appliance: build
+    {{run_env}} PROJECTM_PRESET_LIST=appliance.txt {{build_dir}}/src/sdl-test-ui/projectM-Test-UI
 
 
 # Run the test UI on a single preset, e.g. `just preset presets/tests/402-compshader-video-motion.milk`
