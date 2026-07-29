@@ -119,6 +119,9 @@ public:
     PRJM_EVAL_F* nude_front_f{};  //!< Main figure exposed female genitalia, 0..1.
     PRJM_EVAL_F* nude_front_m{};  //!< Main figure exposed male genitalia, 0..1.
     PRJM_EVAL_F* nude_female{};   //!< Face gender axis: 1=female, 0=male, 0.5=unknown.
+    PRJM_EVAL_F* pose_enabled{};        //!< 1 when a pose model is loaded.
+    PRJM_EVAL_F* nude_enabled{};        //!< 1 when the NudeNet detector is loaded.
+    PRJM_EVAL_F* seg_enabled{};         //!< 1 when person-seg masking is active.
     PRJM_EVAL_F* touch_on{};       //!< 1.0 while a touch is active, else 0.0.
     PRJM_EVAL_F* touch_x{};        //!< Touch X, 0..1 left to right.
     PRJM_EVAL_F* touch_y{};        //!< Touch Y, 0..1 bottom to top.

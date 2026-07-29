@@ -154,6 +154,16 @@ public:
     float nudeFrontM{0.0f};   //!< Exposed male genitalia, [0,1] (nude_front_m).
     float nudeFemale{0.5f};   //!< Face gender axis: 1=female, 0=male, 0.5=unknown (nude_female).
 
+    // Feature CAPABILITY flags: 1.0 when the app has that optional vision model loaded and running,
+    // else 0.0. Distinct from the per-frame "valid" signals (seg_valid/pose_valid) and the nude_*
+    // magnitudes, which are 0 both when the feature is OFF and when it is ON but detecting nothing.
+    // A preset checks these to decide whether a capability exists at all before relying on it (e.g.
+    // don't gate on pose ignition when pose_enabled is 0). Exposed as eval variables AND shader
+    // uniforms (pose_enabled / nude_enabled / seg_enabled).
+    float poseEnabled{0.0f};  //!< 1.0 when a pose model is loaded (pose_enabled).
+    float nudeEnabled{0.0f};  //!< 1.0 when the NudeNet detector is loaded (nude_enabled).
+    float segEnabled{0.0f};   //!< 1.0 when person-seg masking is active (seg_enabled).
+
     // Single arbitrated touch point, exposed to presets as touch_* eval variables. Written by
     // ProjectM::Touch/TouchDrag/TouchDestroy (mouse today, pose bridge later). Coordinate
     // convention matches seg_* exactly (Y bottom to top) so presets treat them interchangeably.

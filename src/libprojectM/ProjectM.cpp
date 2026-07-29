@@ -737,6 +737,15 @@ auto ProjectM::VideoIsActive() const -> bool
     return m_videoTexture != nullptr;
 }
 
+void ProjectM::SetCapabilities(bool poseEnabled, bool nudeEnabled, bool segEnabled)
+{
+    // Plain stores; the render thread reads them in GetRenderContext() (benign races, like the
+    // other camera-fed signals). Set once at model-load time, not per frame.
+    m_poseEnabled = poseEnabled ? 1.0f : 0.0f;
+    m_nudeEnabled = nudeEnabled ? 1.0f : 0.0f;
+    m_segEnabled = segEnabled ? 1.0f : 0.0f;
+}
+
 void ProjectM::VideoSetSegIdle(bool idle)
 {
     // NOT smoothed: this is a latch, not a measurement. The app's gate already decides when to turn
@@ -1039,6 +1048,9 @@ auto ProjectM::GetRenderContext() -> Renderer::RenderContext
     ctx.segCoverage = m_segCoverage;
     ctx.segIdle = m_segIdle;
     ctx.segValid = m_segValid;
+    ctx.poseEnabled = m_poseEnabled;
+    ctx.nudeEnabled = m_nudeEnabled;
+    ctx.segEnabled = m_segEnabled;
 
     ctx.nudeTop = m_nudeTop;
     ctx.nudeRear = m_nudeRear;

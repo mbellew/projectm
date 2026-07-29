@@ -348,6 +348,11 @@ void projectMSDL::startVideoCapture()
                     }
                 }
 
+                // Tell presets which optional vision features are live (pose_enabled / nude_enabled /
+                // seg_enabled). We are inside the seg-loaded branch, so seg is active; pose and nude
+                // are whatever loaded above. Set once here; the library defaults them to 0 otherwise.
+                projectm_video_set_capabilities(handle, pose != nullptr, nude != nullptr, /*seg=*/true);
+
                 // Pose->touch confidence tuning (env, live). confFloor: drop wrists below this raw
                 // keypoint confidence. alphaFloor: how much a wrist OFF the seg matte keeps of its
                 // confidence (1.0 = ignore the matte entirely). A fast-waving hand is often clipped

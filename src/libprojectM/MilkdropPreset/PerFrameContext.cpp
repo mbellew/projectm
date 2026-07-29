@@ -72,6 +72,9 @@ void PerFrameContext::RegisterBuiltinVariables()
     REG_VAR(nude_front_f);
     REG_VAR(nude_front_m);
     REG_VAR(nude_female);
+    REG_VAR(pose_enabled);
+    REG_VAR(nude_enabled);
+    REG_VAR(seg_enabled);
     REG_VAR(touch_on);
     REG_VAR(touch_x);
     REG_VAR(touch_y);
@@ -242,6 +245,9 @@ void PerFrameContext::LoadStateVariables(PresetState& state)
     *nude_front_f = static_cast<PRJM_EVAL_F>(state.renderContext.nudeFrontF);
     *nude_front_m = static_cast<PRJM_EVAL_F>(state.renderContext.nudeFrontM);
     *nude_female = static_cast<PRJM_EVAL_F>(state.renderContext.nudeFemale);
+    *pose_enabled = static_cast<PRJM_EVAL_F>(state.renderContext.poseEnabled);
+    *nude_enabled = static_cast<PRJM_EVAL_F>(state.renderContext.nudeEnabled);
+    *seg_enabled = static_cast<PRJM_EVAL_F>(state.renderContext.segEnabled);
     *touch_on = static_cast<PRJM_EVAL_F>(state.renderContext.touchOn);
     *touch_x = static_cast<PRJM_EVAL_F>(state.renderContext.touchX);
     *touch_y = static_cast<PRJM_EVAL_F>(state.renderContext.touchY);

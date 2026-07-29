@@ -373,6 +373,14 @@ public:
     void VideoSetSegIdle(bool idle);
 
     /**
+     * @brief Declares which optional vision features the app has loaded and running.
+     * Exposed to presets as the pose_enabled / nude_enabled / seg_enabled eval variables and shader
+     * uniforms, so a preset can tell a feature is OFF (flag 0) from ON-but-idle (flag 1, data 0).
+     * Set once when models are configured, not per frame.
+     */
+    void SetCapabilities(bool poseEnabled, bool nudeEnabled, bool segEnabled);
+
+    /**
      * @brief Submits the current body-pose skeleton. Safe to call from any thread.
      * @param jointsXYZC Flat array of 4 floats per joint (x, y, z, confidence), indexed by
      *        Renderer::PoseJoint. Camera-native X; the mirror is applied internally.
@@ -489,6 +497,9 @@ private:
     float m_segCoverage{0.0f};                    //!< Smoothed foreground fraction (seg_coverage).
     float m_segIdle{0.0f};                        //!< 1 = the matte is a synthetic stand-in (seg_idle).
     float m_segValid{0.0f};                       //!< 1.0 when a confident mask is present (seg_valid).
+    float m_poseEnabled{0.0f};                    //!< 1 = pose model loaded (pose_enabled). See SetCapabilities.
+    float m_nudeEnabled{0.0f};                    //!< 1 = NudeNet loaded (nude_enabled).
+    float m_segEnabled{0.0f};                     //!< 1 = person-seg active (seg_enabled).
 
     // Main-figure NudeNet exposure verdict. Already de-flickered by the app, so these are plain
     // stores read back next frame in the RenderContext fill (like the pose skeleton) -- the

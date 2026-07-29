@@ -621,6 +621,13 @@ void projectm_video_set_nudity(projectm_handle instance, float top, float rear,
     projectMInstance->SetNudity(top, rear, front_female, front_male, female);
 }
 
+void projectm_video_set_capabilities(projectm_handle instance, bool pose_enabled,
+                                     bool nude_enabled, bool seg_enabled)
+{
+    auto* projectMInstance = handle_to_instance(instance);
+    projectMInstance->SetCapabilities(pose_enabled, nude_enabled, seg_enabled);
+}
+
 uint32_t projectm_sprite_create(projectm_handle instance, const char* type, const char* code)
 {
     auto* projectMInstance = handle_to_instance(instance);

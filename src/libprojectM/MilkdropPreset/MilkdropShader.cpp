@@ -312,6 +312,9 @@ void MilkdropShader::LoadVariables(const PresetState& presetState, const PerFram
     m_shader.SetUniformFloat("seg_coverage", presetState.renderContext.segCoverage);
     m_shader.SetUniformFloat("seg_idle", presetState.renderContext.segIdle);
     m_shader.SetUniformFloat("seg_valid", presetState.renderContext.segValid);
+    m_shader.SetUniformFloat("pose_enabled", presetState.renderContext.poseEnabled);
+    m_shader.SetUniformFloat("nude_enabled", presetState.renderContext.nudeEnabled);
+    m_shader.SetUniformFloat("seg_enabled", presetState.renderContext.segEnabled);
 
 
     std::array<glm::mat4, 24> tempMatrices{};

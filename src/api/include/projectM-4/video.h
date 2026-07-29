@@ -248,6 +248,26 @@ PROJECTM_EXPORT void projectm_video_set_seg_centroid(projectm_handle instance,
 PROJECTM_EXPORT void projectm_video_set_nudity(projectm_handle instance, float top, float rear,
                                                float front_female, float front_male, float female);
 
+/**
+ * @brief Declares which optional vision features the application has loaded and running.
+ *
+ * Presets read these as the pose_enabled / nude_enabled / seg_enabled eval variables and shader
+ * uniforms. They are CAPABILITY flags, distinct from the per-frame detection signals: seg_valid,
+ * pose_valid and the nude_* magnitudes all read 0 both when a feature is disabled and when it is
+ * enabled but currently detecting nothing. A preset checks the *_enabled flag to know a feature
+ * exists at all before relying on it (e.g. skip pose-driven behaviour when pose_enabled is 0).
+ *
+ * Set once when the app configures its models, not per frame. Safe to call from any thread.
+ *
+ * @param instance The projectM instance handle.
+ * @param pose_enabled Non-zero when a pose model is loaded and running (pose_enabled).
+ * @param nude_enabled Non-zero when the NudeNet detector is loaded and running (nude_enabled).
+ * @param seg_enabled Non-zero when person-segmentation masking is active (seg_enabled).
+ * @since 4.3.0
+ */
+PROJECTM_EXPORT void projectm_video_set_capabilities(projectm_handle instance, bool pose_enabled,
+                                                     bool nude_enabled, bool seg_enabled);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
