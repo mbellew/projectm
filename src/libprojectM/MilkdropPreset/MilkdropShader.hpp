@@ -64,14 +64,19 @@ public:
     /**
      * @brief Translates and compiles a VideoShader. Requires a current GL context.
      *
-     * Unlike LoadTexturesAndCompile, this needs no PresetState: the video preprocess pass owns
-     * its textures (the live frame, the mask buffer and the history). Call after LoadCode().
+     * The video preprocess pass owns the fixed samplers (the live frame, the mask buffer and the
+     * history), but a video_ shader may also reference CUSTOM preset textures (e.g. an overlay
+     * image). Those descriptors are resolved from @p presetState here and declared in the shader;
+     * VideoTexture::UpdateGPU binds them at texture units after its own fixed samplers (see
+     * VideoTextureDescriptors). Call after LoadCode().
      */
-    void CompileVideoShader();
+    void CompileVideoShader(PresetState& presetState);
 
     /**
      * @brief Loads all required shader variables into the uniforms.
-     * Binds the underlying shader program.
+     * Binds the underlying shader program. For a video_ shader the texture-descriptor binding is
+     * SKIPPED (the video preprocess pass owns unit assignment and binds VideoTextureDescriptors()
+     * itself); the q-vars, the seg/nude/pose signals and other uniforms are still set.
      * @param presetState The preset state to pull the values from.
      * @param perFrameContext The per-frame context with dynamically calculated values.
      */
@@ -82,6 +87,12 @@ public:
      * @return The shader program wrapper.
      */
     auto Shader() -> Renderer::Shader&;
+
+    /**
+     * @brief Custom (non-preprocess-owned) texture descriptors referenced by a video_ shader.
+     * VideoTexture::UpdateGPU binds these at units after its fixed samplers. Empty for other types.
+     */
+    auto VideoTextureDescriptors() -> std::vector<Renderer::TextureSamplerDescriptor>&;
 
 private:
     /**
@@ -122,6 +133,8 @@ private:
     ShaderType m_type{ShaderType::WarpShader}; //!< Type of this shader.
     std::string m_fragmentShaderCode;          //!< The original preset fragment shader code.
     std::string m_preprocessedCode;            //!< The preprocessed preset shader code.
+    bool m_isVideoShader{false};               //!< True for a VideoShader: LoadVariables skips the
+                                               //!< texture-binding loop (UpdateGPU owns unit assignment).
 
     std::set<std::string> m_samplerNames;                                        //!< All sampler names referenced in the shader code.
     std::vector<Renderer::TextureSamplerDescriptor> m_mainTextureDescriptors;              //!< Descriptors for all main texture references.

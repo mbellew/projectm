@@ -383,6 +383,14 @@ void MilkdropShader::LoadVariables(const PresetState& presetState, const PerFram
                                                     presetState.frameQVariables[i + 3]});
     }
 
+    // A video_ shader's textures are bound by VideoTexture::UpdateGPU (it owns the texture-unit
+    // layout: the fixed preprocess samplers first, then VideoTextureDescriptors()). Binding them
+    // here would fight that and clobber unit assignments, so skip -- only the uniforms above apply.
+    if (m_isVideoShader)
+    {
+        return;
+    }
+
     // Bind all texture and sampler descriptors. This includes the main and blur textures.
     GLint textureUnit{0};
     for (auto& desc : m_mainTextureDescriptors)
@@ -871,9 +879,31 @@ void MilkdropShader::TranspileHLSLShader(const PresetState& presetState, std::st
     }
 }
 
-void MilkdropShader::CompileVideoShader()
+void MilkdropShader::CompileVideoShader(PresetState& presetState)
 {
+    m_isVideoShader = true;
+
+    // Resolve CUSTOM textures a video_ shader references (anything beyond the preprocess-owned
+    // fixed samplers). These are declared in the transpiled source below and bound by
+    // VideoTexture::UpdateGPU at units after its fixed samplers. The fixed names are skipped here;
+    // "main"/"blurN" are not available in the video pass and are ignored if referenced.
+    static const std::set<std::string> fixedNames{
+        "main", "video_in", "mask", "video", "palette", "palette_lab", "blur1", "blur2", "blur3"};
+    m_textureSamplerDescriptors.clear();
+    for (const auto& name : m_samplerNames)
+    {
+        std::string baseName = name;
+        if (name.length() > 3 && name.at(2) == '_') { baseName = name.substr(3); }
+        if (fixedNames.count(Utils::ToLower(baseName)) > 0) { continue; }
+        m_textureSamplerDescriptors.push_back(presetState.renderContext.textureManager->GetTexture(name));
+    }
+
     TranspileVideoShader(m_preprocessedCode);
+}
+
+auto MilkdropShader::VideoTextureDescriptors() -> std::vector<Renderer::TextureSamplerDescriptor>&
+{
+    return m_textureSamplerDescriptors;
 }
 
 void MilkdropShader::TranspileVideoShader(std::string& program)
@@ -918,6 +948,13 @@ void MilkdropShader::TranspileVideoShader(std::string& program)
         // video_alpha_mode path -- i.e. no preset's video_ shader ever ran.
         "uniform sampler2D sampler_fc_palette;\n"
         "uniform sampler2D sampler_fc_palette_lab;\n");
+
+    // Declare the CUSTOM textures resolved in CompileVideoShader (author sampler declarations were
+    // stripped above). Bound by VideoTexture::UpdateGPU at units after the fixed samplers.
+    for (const auto& desc : m_textureSamplerDescriptors)
+    {
+        sourcePreprocessed.insert(0, desc.SamplerDeclaration() + desc.TexSizeDeclaration());
+    }
 
     M4::Log_ClearError();
     if (!parser.Parse("", sourcePreprocessed.c_str(), sourcePreprocessed.size()))

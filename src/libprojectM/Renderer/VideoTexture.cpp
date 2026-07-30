@@ -2,6 +2,7 @@
 
 #include "Renderer/OpenGL.h"
 #include "Renderer/Shader.hpp"
+#include "Renderer/TextureSamplerDescriptor.hpp"
 #include "Renderer/VideoPreprocessShaders.hpp"
 
 #include <algorithm>
@@ -103,7 +104,8 @@ void VideoTexture::SubmitFrameGPU()
     m_pendingFrameIsGpu = true;
 }
 
-void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
+void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader,
+                            const std::vector<TextureSamplerDescriptor>* alphaShaderTextures)
 {
     bool gpuFrame = false;
     bool gatePending = false;
@@ -323,12 +325,31 @@ void VideoTexture::UpdateGPU(const AlphaParams& params, Shader* alphaShader)
         glBindTexture(GL_TEXTURE_3D, m_texture->TextureID());
         alphaShader->SetUniformInt("sampler_fw_video", 2);
 
+        // Custom preset textures the video_ shader references (e.g. an overlay image), at units
+        // AFTER the three fixed samplers above. Their sampler uniforms were declared in the shader;
+        // Bind() sets them and binds the texture+sampler to the unit.
+        GLint customUnit = 3;
+        if (alphaShaderTextures != nullptr)
+        {
+            for (const auto& desc : *alphaShaderTextures)
+            {
+                desc.Bind(customUnit, *alphaShader);
+                customUnit++;
+            }
+        }
+
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_morphTex[0], 0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
 
         // Release the history from unit 2 before the slice copy rebinds it as the copy target.
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_3D, 0);
+        // Release any custom textures from their units.
+        for (GLint u = 3; u < customUnit; ++u)
+        {
+            glActiveTexture(GL_TEXTURE0 + u);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
         glBindVertexArray(0);
         finalTex = m_morphTex[0];
     }

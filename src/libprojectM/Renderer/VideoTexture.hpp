@@ -127,8 +127,12 @@ public:
      * @param alphaShader Optional preset "combine" shader that authors the alpha (and optionally
      *        rgb) written into the history from the live frame, the mask buffer and the history.
      *        When set, the fixed alpha-mode refinement/cleanup is bypassed for this frame.
+     * @param alphaShaderTextures Optional custom texture descriptors the alphaShader references
+     *        (e.g. an overlay image). Bound at texture units AFTER this pass's fixed samplers, with
+     *        their sampler uniforms set on alphaShader. Ignored when alphaShader is null.
      */
-    void UpdateGPU(const AlphaParams& params, class Shader* alphaShader = nullptr);
+    void UpdateGPU(const AlphaParams& params, class Shader* alphaShader = nullptr,
+                   const std::vector<class TextureSamplerDescriptor>* alphaShaderTextures = nullptr);
 
     /**
      * @brief Sets the ChromaKey background color (normalized 0..1), supplied by the

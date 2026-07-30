@@ -89,7 +89,7 @@ void MilkdropPreset::Initialize(const Renderer::RenderContext& renderContext)
     {
         try
         {
-            m_videoShader->CompileVideoShader();
+            m_videoShader->CompileVideoShader(m_state);
             LOG_DEBUG("[MilkdropPreset] Successfully compiled video shader code.");
         }
         catch (const Renderer::ShaderException& ex)
@@ -299,9 +299,18 @@ void MilkdropPreset::PerFrameUpdate()
         params.cleanup = static_cast<int>(*m_perFrameContext.video_cleanup);
         params.refine = *m_perFrameContext.video_refine > 0.5;
         // A preset video_ shader (if present and compiled) authors the alpha/rgb written into the
-        // history, superseding the fixed alpha-mode path for this frame.
-        Renderer::Shader* alphaShader = m_videoShader ? &m_videoShader->Shader() : nullptr;
-        m_state.renderContext.videoTexture->UpdateGPU(params, alphaShader);
+        // history, superseding the fixed alpha-mode path for this frame. Load its uniforms (q-vars,
+        // seg_*/nude_*/pose_*, etc.) -- it is not part of the main warp/comp pass, so nothing else
+        // sets them -- and hand its custom textures to UpdateGPU to bind after the fixed samplers.
+        Renderer::Shader* alphaShader = nullptr;
+        const std::vector<Renderer::TextureSamplerDescriptor>* alphaShaderTextures = nullptr;
+        if (m_videoShader)
+        {
+            m_videoShader->LoadVariables(m_state, m_perFrameContext);
+            alphaShader = &m_videoShader->Shader();
+            alphaShaderTextures = &m_videoShader->VideoTextureDescriptors();
+        }
+        m_state.renderContext.videoTexture->UpdateGPU(params, alphaShader, alphaShaderTextures);
 
         m_state.renderContext.videoZWrite = m_state.renderContext.videoTexture->NormalizedWritePosition();
         m_state.renderContext.videoZRange = m_state.renderContext.videoTexture->NormalizedRange();
