@@ -639,15 +639,15 @@ void projectMSDL::startVideoCapture()
                                 }
 
                                 // HEART: shoulder midpoint dropped toward the hips (= the quad point at
-                                // u=0.5, v=0.30). 0.30 sits mid-upper chest; the older 0.15 read too high.
+                                // u=0.5, v=0.28). 0.28 sits mid-upper chest; the older 0.15 read too high.
                                 if (ls.conf > 0.4f && rs.conf > 0.4f)
                                 {
                                     float hx = (ls.x + rs.x) * 0.5f;
                                     float hy = (ls.y + rs.y) * 0.5f;
                                     if (lhip.conf > 0.3f && rhip.conf > 0.3f)
                                     {
-                                        hx += 0.18f * ((lhip.x + rhip.x) * 0.5f - hx);
-                                        hy += 0.18f * ((lhip.y + rhip.y) * 0.5f - hy);
+                                        hx += 0.28f * ((lhip.x + rhip.x) * 0.5f - hx);
+                                        hy += 0.28f * ((lhip.y + rhip.y) * 0.5f - hy);
                                     }
                                     else
                                     {

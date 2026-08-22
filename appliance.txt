@@ -8,3 +8,6 @@ presets/video/recursive quad - time-offset.milk
 presets/video/firedancer.milk
 presets/video/comicbook.milk
 presets/video/burning-man.milk
+presets/video/helix-reflect.milk
+presets/video/suksma - succubus holidaze.milk
+presets/video/idrugs-spiral-flux.milk
